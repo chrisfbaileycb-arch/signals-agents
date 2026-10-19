@@ -13,6 +13,11 @@ import {
 	WorkflowTopology,
 } from 'lib/workflowTypes';
 import {
+	computeHarnessValidationCensus,
+	evaluateGcloudDeployMonitor,
+	HarnessSubstrate,
+} from 'lib/harnessConfig';
+import {
 	ChatBubbleIcon,
 	CheckIcon,
 	CopyIcon,
@@ -43,6 +48,7 @@ interface InstancePaneProps {
 	keyRoutingScope?: KeyRoutingScope;
 	isByokConnected?: boolean;
 	onOpenByokConnector?: () => void;
+	onOpenHarnessStudio?: () => void;
 }
 
 export default function Pane({
@@ -57,7 +63,10 @@ export default function Pane({
 	keyRoutingScope = 'shared_four',
 	isByokConnected = true,
 	onOpenByokConnector,
+	onOpenHarnessStudio,
 }: InstancePaneProps) {
+	const [selectedHarnessFile, setSelectedHarnessFile] =
+		useState<string>('systemprompt.md');
 	const [showSchedulerConfig, setShowSchedulerConfig] = useState(false);
 	const [showAddStepForm, setShowAddStepForm] = useState(false);
 	const [newStepTitle, setNewStepTitle] = useState('');
@@ -257,7 +266,7 @@ export default function Pane({
 
 	return (
 		<div
-			className={`flex flex-col min-h-[480px] bg-slate-900/90 border rounded-lg overflow-hidden transition-colors shadow-sm ${
+			className={`flex flex-col min-h-[520px] bg-slate-900/90 border rounded-lg overflow-hidden transition-colors ${
 				instance.status === 'running'
 					? 'border-indigo-500/80'
 					: instance.status === 'blocked' || instance.status === 'error'
@@ -265,10 +274,10 @@ export default function Pane({
 					: 'border-slate-800'
 			}`}
 		>
-			{/* Top Instance Header */}
-			<div className="px-3.5 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-col gap-2 shrink-0">
-				<div className="flex items-center justify-between gap-2">
-					<div className="flex items-center gap-2 min-w-0">
+			{/* Top Instance Header — Spacious & Open */}
+			<div className="px-5 py-4 bg-slate-900 border-b border-slate-800 flex flex-col gap-3 shrink-0">
+				<div className="flex items-center justify-between gap-3">
+					<div className="flex items-center gap-2.5 min-w-0">
 						<span className="font-mono tabular-nums text-xs font-semibold text-indigo-400 shrink-0">
 							0{instance.id}
 						</span>
@@ -477,24 +486,36 @@ export default function Pane({
 						})}
 					</div>
 
-					{/* Ephemeral BYOK Lease & Guardrail Respect Status Line */}
-					<div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
-						<div className="flex items-center gap-1.5 truncate">
+					{/* Ephemeral BYOK Lease, Harness & Guardrail Status Line */}
+					<div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+						<div className="flex items-center gap-2 truncate">
 							<LockClosedIcon className="w-3 h-3 text-emerald-400 shrink-0" />
 							<span className="truncate">
 								PII: {instance.guardrails.piiPolicy.toUpperCase()} · Fin:{' '}
 								{instance.guardrails.financialPolicy.toUpperCase()}
-								{instance.totalRedactionsCount > 0
-									? ` (${instance.totalRedactionsCount} masked)`
-									: ''}
 							</span>
+							<span aria-hidden="true">·</span>
+							<button
+								type="button"
+								onClick={() =>
+									onUpdateInstance(instance.id, (prev) => ({
+										...prev,
+										viewMode: 'harness',
+									}))
+								}
+								className="font-mono text-indigo-300 hover:underline truncate"
+								title="Inspect or edit this agent's harness2.v1 configuration"
+							>
+								Harness: {instance.harness.substrate} (
+								{instance.harness.validationCensus.skills} skills)
+							</button>
 						</div>
 
 						<button
 							type="button"
 							onClick={onOpenByokConnector}
 							className="flex items-center gap-1 font-mono tabular-nums text-[10px] shrink-0 hover:underline"
-							title="Open Front-End BYOK & Ephemeral Lease Connector"
+							title="Open Credentials & Safety Guardrails"
 						>
 							<span
 								className={
@@ -508,12 +529,12 @@ export default function Pane({
 								}
 							>
 								{instance.leaseStatus === 'active'
-									? `BYOK Lease Active (${instance.leaseId?.slice(0, 10)})`
+									? `Lease Active (${instance.leaseId?.slice(0, 8)})`
 									: instance.leaseStatus === 'purged'
-									? 'BYOK Key Auto-Deleted (0ms)'
+									? 'Key Auto-Deleted (0ms)'
 									: keyRoutingScope === 'shared_four'
-									? 'BYOK: 1 Key → 4x Shared'
-									: `BYOK: Agent 0${instance.id} Lease`}
+									? 'BYOK Shared'
+									: `Agent 0${instance.id} Lease`}
 							</span>
 						</button>
 					</div>
@@ -661,8 +682,8 @@ export default function Pane({
 				</div>
 			)}
 
-			{/* Segmented View Control: Steps | System Prompt | Guardrails | Chat */}
-			<div className="px-3.5 py-1.5 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
+			{/* Segmented View Control: Steps | Harness | System Prompt | Guardrails | Chat */}
+			<div className="px-5 py-2.5 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
 				<div className="flex items-center gap-1 p-0.5 bg-slate-900 border border-slate-800 rounded-md overflow-x-auto">
 					<button
 						type="button"
@@ -672,7 +693,7 @@ export default function Pane({
 								viewMode: 'steps',
 							}))
 						}
-						className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
+						className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
 							instance.viewMode === 'steps'
 								? 'bg-slate-800 text-white'
 								: 'text-slate-400 hover:text-slate-200'
@@ -685,10 +706,26 @@ export default function Pane({
 						onClick={() =>
 							onUpdateInstance(instance.id, (prev) => ({
 								...prev,
+								viewMode: 'harness',
+							}))
+						}
+						className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
+							instance.viewMode === 'harness'
+								? 'bg-indigo-600 text-white'
+								: 'text-slate-400 hover:text-slate-200'
+						}`}
+					>
+						Harness ({instance.harness.substrate})
+					</button>
+					<button
+						type="button"
+						onClick={() =>
+							onUpdateInstance(instance.id, (prev) => ({
+								...prev,
 								viewMode: 'prompt',
 							}))
 						}
-						className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
+						className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
 							instance.viewMode === 'prompt'
 								? 'bg-slate-800 text-white'
 								: 'text-slate-400 hover:text-slate-200'
@@ -704,7 +741,7 @@ export default function Pane({
 								viewMode: 'guardrails',
 							}))
 						}
-						className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
+						className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
 							instance.viewMode === 'guardrails'
 								? 'bg-slate-800 text-white'
 								: 'text-slate-400 hover:text-slate-200'
@@ -720,7 +757,7 @@ export default function Pane({
 								viewMode: 'chat',
 							}))
 						}
-						className={`px-2 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
+						className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
 							instance.viewMode === 'chat'
 								? 'bg-slate-800 text-white'
 								: 'text-slate-400 hover:text-slate-200'
@@ -779,12 +816,12 @@ export default function Pane({
 				</div>
 			)}
 
-			{/* Main Viewport: 1) Multi-Step Agent Pipeline */}
+			{/* Main Viewport: 1) Multi-Step Agent Pipeline — Spacious & Open */}
 			{instance.viewMode === 'steps' && (
-				<div className="flex-1 min-h-[260px] overflow-y-auto p-3 space-y-2.5 divide-y divide-slate-800/60">
+				<div className="flex-1 min-h-[280px] overflow-y-auto p-5 space-y-4 divide-y divide-slate-800/60">
 					{/* Visible Handoff Context Banner */}
 					{instance.receivedHandoffFrom && (
-						<div className="p-2 bg-indigo-950/30 border border-indigo-800/50 rounded text-[11px] text-indigo-200 flex items-center justify-between">
+						<div className="p-2.5 bg-indigo-950/30 border border-indigo-800/50 rounded text-[11px] text-indigo-200 flex items-center justify-between">
 							<span className="truncate">
 								Handoff Received: {instance.receivedHandoffFrom}
 							</span>
@@ -812,9 +849,9 @@ export default function Pane({
 						return (
 							<div
 								key={step.id}
-								className={`pt-2.5 first:pt-0 flex flex-col gap-1.5 rounded-md transition-colors ${
+								className={`pt-4 first:pt-0 flex flex-col gap-2 rounded-md transition-colors ${
 									step.status === 'running'
-										? 'p-2.5 bg-slate-950/90 border border-amber-500/50'
+										? 'p-3.5 bg-slate-950/90 border border-amber-500/50'
 										: ''
 								}`}
 							>
@@ -919,7 +956,7 @@ export default function Pane({
 									{step.instruction}
 								</p>
 
-								{/* DETAILED REAL-TIME PROGRESS BAR WITHIN EVERY STEP (Highlighted when Active) */}
+								{/* DETAILED REAL-TIME PROGRESS BAR WITHIN EVERY STEP */}
 								<div className="pl-5 pt-0.5 space-y-1.5">
 									<div className="flex items-center justify-between text-[10px] font-mono tabular-nums">
 										<span
@@ -962,9 +999,8 @@ export default function Pane({
 										/>
 									</div>
 
-									{/* Detailed 4-Stage Micro-Task Progress Breakdown for Active or Expanded Step */}
-									{(step.status === 'running' ||
-										(expanded && step.status === 'completed')) && (
+									{/* Detailed 4-Stage Micro-Task Progress Breakdown ONLY while actively running */}
+									{step.status === 'running' && (
 										<div className="grid grid-cols-2 gap-1.5 pt-1">
 											{subTasks.map((sub, subIdx) => {
 												const isSubDone =
@@ -1294,9 +1330,204 @@ export default function Pane({
 				</div>
 			)}
 
+			{/* Main Viewport: 1B) Per-Agent Harness Configuration (harness2.v1) */}
+			{instance.viewMode === 'harness' && (
+				<div className="flex-1 min-h-[280px] overflow-y-auto p-5 space-y-4 text-xs">
+					<div className="flex items-center justify-between gap-2">
+						<div>
+							<h4 className="font-semibold text-slate-100">
+								Agent Harness Configuration ({instance.harness.schemaVersion})
+							</h4>
+							<p className="text-[11px] text-slate-400 mt-0.5">
+								Substrate:{' '}
+								<span className="font-mono text-indigo-300">
+									{instance.harness.substrate}
+								</span>{' '}
+								· Always-on:{' '}
+								<span className="font-mono tabular-nums text-slate-200">
+									{instance.harness.validationCensus.alwaysOnChars} /{' '}
+									{instance.harness.validationCensus.alwaysOnMax} chars
+								</span>
+							</p>
+						</div>
+						{onOpenHarnessStudio && (
+							<button
+								type="button"
+								onClick={onOpenHarnessStudio}
+								className="px-2.5 py-1 text-[11px] font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors shrink-0"
+							>
+								Open Full Harness Studio →
+							</button>
+						)}
+					</div>
+
+					{/* Substrate & Execution Binding Controls */}
+					<div className="grid grid-cols-2 gap-3 p-3 bg-slate-950 border border-slate-800 rounded">
+						<div>
+							<label className="block text-[11px] text-slate-400 mb-1">
+								Target Substrate
+							</label>
+							<select
+								value={instance.harness.substrate}
+								disabled={instance.status === 'running'}
+								onChange={(e) =>
+									onUpdateInstance(instance.id, (prev) => ({
+										...prev,
+										harness: {
+											...prev.harness,
+											substrate: e.target.value as HarnessSubstrate,
+										},
+									}))
+								}
+								className="w-full px-2 py-1 text-xs font-mono bg-slate-900 border border-slate-800 rounded text-slate-200"
+							>
+								<option value="oc">oc (OpenCode / ADK)</option>
+								<option value="adk">adk (Google Cloud ADK)</option>
+								<option value="agent_runtime">
+									agent_runtime (:streamQuery)
+								</option>
+								<option value="cloud_run">cloud_run (A2A Service)</option>
+								<option value="gke">gke (Kubernetes A2A)</option>
+							</select>
+						</div>
+
+						<div>
+							<label className="block text-[11px] text-slate-400 mb-1">
+								Editor Tree File ({instance.harness.validationCensus.nFiles})
+							</label>
+							<select
+								value={
+									instance.harness.editorTree[selectedHarnessFile] !== undefined
+										? selectedHarnessFile
+										: 'systemprompt.md'
+								}
+								onChange={(e) => setSelectedHarnessFile(e.target.value)}
+								className="w-full px-2 py-1 text-xs font-mono bg-slate-900 border border-slate-800 rounded text-slate-200"
+							>
+								{Object.keys(instance.harness.editorTree).map((path) => (
+									<option key={path} value={path}>
+										{path}
+									</option>
+								))}
+							</select>
+						</div>
+					</div>
+
+					{/* Inline File Content Editor */}
+					<div className="space-y-1.5">
+						<div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+							<span>
+								{instance.harness.editorTree[selectedHarnessFile] !== undefined
+									? selectedHarnessFile
+									: 'systemprompt.md'}
+							</span>
+							<span>
+								{
+									(
+										instance.harness.editorTree[
+											instance.harness.editorTree[selectedHarnessFile] !==
+											undefined
+												? selectedHarnessFile
+												: 'systemprompt.md'
+										] || ''
+									).length
+								}{' '}
+								chars
+							</span>
+						</div>
+						<textarea
+							rows={6}
+							disabled={instance.status === 'running'}
+							value={
+								instance.harness.editorTree[
+									instance.harness.editorTree[selectedHarnessFile] !== undefined
+										? selectedHarnessFile
+										: 'systemprompt.md'
+								] || ''
+							}
+							onChange={(e) => {
+								const targetKey =
+									instance.harness.editorTree[selectedHarnessFile] !== undefined
+										? selectedHarnessFile
+										: 'systemprompt.md';
+								const nextVal = e.target.value;
+								onUpdateInstance(instance.id, (prev) => {
+									const nextTree = {
+										...prev.harness.editorTree,
+										[targetKey]: nextVal,
+									};
+									return {
+										...prev,
+										harness: {
+											...prev.harness,
+											exportedAt: new Date().toISOString(),
+											editorTree: nextTree,
+											validationCensus: computeHarnessValidationCensus(
+												nextTree,
+												prev.harness.validationCensus.alwaysOnMax,
+											),
+										},
+									};
+								});
+							}}
+							className="w-full p-2.5 text-xs font-mono leading-relaxed bg-slate-950 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-indigo-500 resize-y"
+						/>
+					</div>
+
+					{/* Census & Deploy Monitor Summary */}
+					{(() => {
+						const monitor = evaluateGcloudDeployMonitor(
+							instance.harness.memoryGi ?? 4.0,
+							instance.harness.concurrency ?? 8,
+							instance.harness.perReqMib ?? 220.0,
+						);
+						return (
+							<div className="p-3 bg-slate-950 border border-slate-800 rounded space-y-1.5 text-[11px] font-mono tabular-nums text-slate-300">
+								<div className="flex items-center justify-between">
+									<span>
+										Skills: {instance.harness.validationCensus.skills} ·
+										Sub-Agents: {instance.harness.validationCensus.subAgents} ·
+										MCP:{' '}
+										{instance.harness.validationCensus.mcpServers.join(', ') ||
+											'none'}
+									</span>
+									<span
+										className={
+											monitor.ok ? 'text-emerald-400' : 'text-red-400'
+										}
+									>
+										Sizing: {monitor.peak_mib}/{monitor.limit_mib} MiB
+									</span>
+								</div>
+								<label className="flex items-center gap-2 pt-1 font-sans text-slate-300 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={instance.harness.enabledInWorkflow !== false}
+										onChange={(e) =>
+											onUpdateInstance(instance.id, (prev) => ({
+												...prev,
+												harness: {
+													...prev.harness,
+													enabledInWorkflow: e.target.checked,
+												},
+											}))
+										}
+										className="rounded border-slate-700 bg-slate-900 text-indigo-600"
+									/>
+									<span>
+										Inject harness2.v1 context into {instance.name} execution
+										steps
+									</span>
+								</label>
+							</div>
+						);
+					})()}
+				</div>
+			)}
+
 			{/* Main Viewport: 2) Unique Per-Agent System Prompt Editor */}
 			{instance.viewMode === 'prompt' && (
-				<div className="flex-1 min-h-[260px] overflow-y-auto p-3.5 space-y-3 text-xs">
+				<div className="flex-1 min-h-[280px] overflow-y-auto p-5 space-y-4 text-xs">
 					<div className="flex items-center justify-between">
 						<div>
 							<h4 className="font-semibold text-slate-100">

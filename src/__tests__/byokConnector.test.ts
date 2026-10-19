@@ -251,5 +251,42 @@ describe('Signals Agents — BYOK Ephemeral Connector & Safety Guardrails', () =
 			expect(note.includeInStepPrompt).toBe(true);
 			expect(window.localStorage.length).toBe(0);
 		});
+
+		it('validates harness2.v1 configurations, alwaysOnChars census, and gcloud_deploy_monitor sizing across all 4 agent workflows', () => {
+			const {
+				CANONICAL_OC_HARNESS_CONFIG,
+				computeHarnessValidationCensus,
+				evaluateGcloudDeployMonitor,
+				buildHarnessExecutionContext,
+			} = require('../lib/harnessConfig');
+			const { INITIAL_FOUR_INSTANCES } = require('../lib/workflowTypes');
+
+			expect(CANONICAL_OC_HARNESS_CONFIG.schemaVersion).toBe('harness2.v1');
+			expect(CANONICAL_OC_HARNESS_CONFIG.substrate).toBe('oc');
+			const census = computeHarnessValidationCensus(
+				CANONICAL_OC_HARNESS_CONFIG.editorTree,
+			);
+			expect(census.valid).toBe(true);
+			expect(census.alwaysOnChars).toBe(1410);
+			expect(census.nFiles).toBe(9);
+			expect(census.skills).toBe(2);
+			expect(census.subAgents).toBe(1);
+			expect(census.scripts).toBe(1);
+			expect(census.mcpServers).toEqual(['dart', 'genkit']);
+
+			const sizing = evaluateGcloudDeployMonitor(4.0, 8, 220.0);
+			expect(sizing.ok).toBe(true);
+			expect(sizing.peak_mib).toBe(2272);
+			expect(sizing.limit_mib).toBe(4096);
+
+			expect(INITIAL_FOUR_INSTANCES).toHaveLength(4);
+			for (const inst of INITIAL_FOUR_INSTANCES) {
+				expect(inst.harness.schemaVersion).toBe('harness2.v1');
+				const ctx = buildHarnessExecutionContext(inst.harness);
+				expect(ctx).toContain('google_agents_cli_deploy');
+				expect(ctx).toContain('developing_bazel');
+			}
+		});
 	});
 });
+

@@ -1,4 +1,8 @@
 import { redactPiiFromText } from './byokConnector';
+import {
+	AgentHarnessConfig,
+	createDefaultAgentHarness,
+} from './harnessConfig';
 
 export type GeminiModelId =
 	| 'gemini-2.5-flash'
@@ -143,7 +147,7 @@ export interface WorkflowInstance {
 	customSystemPrompt: string;
 	model: GeminiModelId;
 	enabled: boolean;
-	viewMode: 'steps' | 'prompt' | 'guardrails' | 'chat';
+	viewMode: 'steps' | 'harness' | 'prompt' | 'guardrails' | 'chat';
 	status: 'idle' | 'scheduled' | 'running' | 'completed' | 'error' | 'blocked';
 	activeStepIndex: number | null; // 1-based step currently executing
 	handoffState: 'idle' | 'receiving' | 'executing' | 'handing_off' | 'completed';
@@ -156,6 +160,7 @@ export interface WorkflowInstance {
 	steps: AgentExecutionStep[];
 	schedule: InstanceScheduleConfig;
 	guardrails: SafetyGuardrailConfig;
+	harness: AgentHarnessConfig;
 	totalRedactionsCount: number;
 	chatHistory: ChatTurn[];
 	lastDeliverable: string;
@@ -448,6 +453,7 @@ export const INITIAL_FOUR_INSTANCES: WorkflowInstance[] = [
 			sanitizeHandoffs: true,
 			enforceReadOnlyFinancials: true,
 		},
+		harness: createDefaultAgentHarness(0),
 		totalRedactionsCount: 0,
 		chatHistory: [],
 		lastDeliverable: '',
@@ -485,6 +491,7 @@ export const INITIAL_FOUR_INSTANCES: WorkflowInstance[] = [
 			sanitizeHandoffs: true,
 			enforceReadOnlyFinancials: true,
 		},
+		harness: createDefaultAgentHarness(1),
 		totalRedactionsCount: 0,
 		chatHistory: [],
 		lastDeliverable: '',
@@ -522,6 +529,7 @@ export const INITIAL_FOUR_INSTANCES: WorkflowInstance[] = [
 			sanitizeHandoffs: true,
 			enforceReadOnlyFinancials: true,
 		},
+		harness: createDefaultAgentHarness(2),
 		totalRedactionsCount: 0,
 		chatHistory: [],
 		lastDeliverable: '',
@@ -559,6 +567,7 @@ export const INITIAL_FOUR_INSTANCES: WorkflowInstance[] = [
 			sanitizeHandoffs: true,
 			enforceReadOnlyFinancials: true,
 		},
+		harness: createDefaultAgentHarness(3),
 		totalRedactionsCount: 0,
 		chatHistory: [],
 		lastDeliverable: '',

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Pane from 'components/pane';
 import WorkflowMindMap from 'components/WorkflowMindMap';
 import WorkflowExportCenter from 'components/WorkflowExportCenter';
+import HarnessConfigStudio from 'components/HarnessConfigStudio';
 import {
 	createDefaultSteps,
 	createDefaultStepSubTasks,
@@ -17,6 +18,11 @@ import {
 	WorkflowInstance,
 	WorkflowTopology,
 } from 'lib/workflowTypes';
+import {
+	AgentHarnessConfig,
+	buildHarnessExecutionContext,
+	computeHarnessValidationCensus,
+} from 'lib/harnessConfig';
 import {
 	ByokProviderId,
 	clearAllByokCredentials,
@@ -43,7 +49,6 @@ import { PromptCritic } from './promptCritic';
 import './App.css';
 import {
 	ArrowRightIcon,
-	CheckCircledIcon,
 	ClockIcon,
 	DownloadIcon,
 	FileTextIcon,
@@ -57,12 +62,18 @@ const SAMPLE_WORKFLOW_PROMPTS = [
 	'Design a fault-tolerant distributed rate-limiting service handling 100k RPS with sub-5ms p99 latency, including data structures, failure fallback, and verification tests.',
 	'Audit and resolve customer billing dispute for Alex Rivera (email: alex.rivera@example.com, SSN: 123-45-6789, Card: 4532-0151-1283-9901, Account: ACCT-8849201) regarding duplicate ledger settlement and propose a PCI-compliant reconciliation workflow.',
 	'Create a zero-downtime PostgreSQL schema migration strategy for a multi-tenant financial ledger table with 250M rows, including read-only compliance verification and rollback safety gates.',
+	'Scaffold, evaluate, and deploy a multi-agent Google Cloud ADK pipeline to Cloud Run and Agent Runtime with Bazel Bzlmod targets, OpenTelemetry NO_CONTENT PII protection, and 4Gi/8-concurrency sizing verification.',
 ];
 
+export type ActivePageTab =
+	| 'workspace'
+	| 'harness'
+	| 'topology'
+	| 'credentials'
+	| 'audit';
+
 export default function Layout() {
-	const [activeTab, setActiveTab] = useState<
-		'workspace' | 'topology' | 'schedules' | 'audit'
-	>('workspace');
+	const [activeTab, setActiveTab] = useState<ActivePageTab>('workspace');
 
 	const [superprompt, setSuperprompt] = useState<string>(
 		SAMPLE_WORKFLOW_PROMPTS[0],
@@ -73,8 +84,12 @@ export default function Layout() {
 	);
 
 	const [topology, setTopology] = useState<WorkflowTopology>('directional');
-	const [gridLayout, setGridLayout] = useState<'columns' | 'grid'>('columns');
-	const [showLiveMindMap, setShowLiveMindMap] = useState<boolean>(true);
+	// Default to spacious 2x2 grid so agent workflows feel open and uncrowded
+	const [gridLayout, setGridLayout] = useState<'grid' | 'focused' | 'columns'>(
+		'grid',
+	);
+	const [focusedAgentId, setFocusedAgentId] = useState<number>(1);
+	const [showInlineMindMap, setShowInlineMindMap] = useState<boolean>(false);
 	const [isGlobalRunning, setIsGlobalRunning] = useState<boolean>(false);
 	const [activeGlobalLeaseId, setActiveGlobalLeaseId] = useState<string | null>(
 		null,
@@ -95,7 +110,6 @@ export default function Layout() {
 	}, [environmentTheme]);
 
 	// Front-End Facing BYOK & Ephemeral Session Memory Connector State
-	const [showByokConnector, setShowByokConnector] = useState<boolean>(true);
 	const [keyRoutingScope, setKeyRoutingScope] =
 		useState<KeyRoutingScope>('shared_four');
 	const [selectedProviderId, setSelectedProviderId] =
@@ -120,9 +134,9 @@ export default function Layout() {
 	const isByokConnected = hasActiveByokCredential();
 	const byokStatusMessage = activeByokStatus.configured
 		? activeByokStatus.mode === 'local_endpoint'
-			? `Local Endpoint Active in Session RAM (${activeByokStatus.baseUrl} · ${activeByokStatus.defaultModel}) · Cleared on Reload`
-			: `${activeByokStatus.providerId.toUpperCase()} Key Active in Session RAM (${activeByokStatus.maskedKeyPreview}) · Never Persisted · Cleared on Reload`
-		: 'No Credential in Session RAM · Financial Guardrail Active (Will Refuse Execution Until Personal API Key or Local Endpoint is Connected)';
+			? `Local Endpoint Active in Session RAM (${activeByokStatus.baseUrl} · ${activeByokStatus.defaultModel})`
+			: `${activeByokStatus.providerId.toUpperCase()} Key Active in Session RAM (${activeByokStatus.maskedKeyPreview}) · Cleared on Reload`
+		: 'No Credential in Session RAM · Connect Personal Key or Local Endpoint to Run';
 
 	// Master Workflow Scheduler state
 	const [masterScheduleMode, setMasterScheduleMode] =
@@ -151,6 +165,32 @@ export default function Layout() {
 	) => {
 		setInstances((prev) =>
 			prev.map((inst) => (inst.id === id ? updater(inst) : inst)),
+		);
+	};
+
+	const handleApplyHarnessToAll = (
+		config: AgentHarnessConfig,
+		optionalSampleObjective?: string,
+	) => {
+		if (optionalSampleObjective) {
+			setSuperprompt(optionalSampleObjective);
+		}
+		setInstances((prev) =>
+			prev.map((inst) => {
+				const clonedTree = { ...config.editorTree };
+				return {
+					...inst,
+					harness: {
+						...config,
+						exportedAt: new Date().toISOString(),
+						editorTree: clonedTree,
+						validationCensus: computeHarnessValidationCensus(
+							clonedTree,
+							config.validationCensus.alwaysOnMax,
+						),
+					},
+				};
+			}),
 		);
 	};
 
@@ -259,7 +299,7 @@ export default function Layout() {
 	};
 
 	const handlePurgeByokNow = () => {
-		const currentStatus = getByokStatus( getActiveProviderId() );
+		const currentStatus = getByokStatus(getActiveProviderId());
 		const targetLease =
 			currentStatus.sessionLeaseId ||
 			activeGlobalLeaseId ||
@@ -410,7 +450,6 @@ export default function Layout() {
 			// Start real-time progress ticker for the active step
 			const progressInterval = setInterval(() => {
 				const elapsed = Date.now() - stepStartMs;
-				// Smooth asymptotic progress curve from 14% up to 94%
 				const computedPct = Math.min(
 					94,
 					Math.round(14 + 80 * (1 - Math.exp(-elapsed / 420))),
@@ -425,7 +464,7 @@ export default function Layout() {
 						: 3;
 				const phaseLabels = [
 					'Phase 1/4 · Scanning PII & Financial Guardrails...',
-					'Phase 2/4 · Binding Unique System Prompt & Handoff...',
+					'Phase 2/4 · Binding Harness & System Prompt Context...',
 					'Phase 3/4 · Running Model Reasoning & Synthesis...',
 					'Phase 4/4 · Verifying Deliverable Schema & Safety...',
 				];
@@ -479,6 +518,8 @@ export default function Layout() {
 								.join('\n')}`
 						: '';
 
+				const harnessContext = buildHarnessExecutionContext(latestInst.harness);
+
 				const stepPrompt = [
 					`Primary Workflow Objective:\n${promptText}`,
 					accumulatedStepsOutput
@@ -492,9 +533,12 @@ export default function Layout() {
 
 				const systemDirective = [
 					latestInst.customSystemPrompt,
+					harnessContext,
 					`You are executing Step ${i + 1}/${stepsSnapshot.length} (${step.title}) as ${latestInst.agentRole}.`,
 					'Respect all PII and financial safety guardrails. Never output raw SSNs, payment card PANs, or unmasked credentials.',
-				].join('\n\n');
+				]
+					.filter(Boolean)
+					.join('\n\n');
 
 				const auditedRes = await executeAuditedProviderCall({
 					model: latestInst.model,
@@ -540,7 +584,7 @@ export default function Layout() {
 										status: 'done',
 									})),
 									durationMs: stepDuration,
-									reasoningSummary: `Executed ${step.title} via ${auditedRes.providerId.toUpperCase()} (${auditedRes.modelUsed})`,
+									reasoningSummary: `Executed ${step.title} via ${auditedRes.providerId.toUpperCase()} (${auditedRes.modelUsed}) · Harness: ${latestInst.harness.substrate}`,
 									executionOutput: stepOutputText,
 									verificationCheck: guardrailSummary,
 									guardrailSummary,
@@ -556,7 +600,6 @@ export default function Layout() {
 					err?.name === 'PiiGuardrailBlockedError';
 				if (isGuardrailRefusal) {
 					setByokErrorBanner(err?.message);
-					setShowByokConnector(true);
 				}
 				updateInstance(instanceId, (prev) => ({
 					...prev,
@@ -608,7 +651,6 @@ export default function Layout() {
 		const inst = instancesRef.current.find((i) => i.id === instanceId);
 		if (!inst || inst.status === 'running') return;
 
-		setShowLiveMindMap(true);
 		const provisionedAt = new Date().toISOString();
 		const status = getByokStatus();
 		const leaseId =
@@ -663,7 +705,6 @@ export default function Layout() {
 		const promptText = superpromptRef.current.trim();
 		if (!promptText || isGlobalRunningRef.current) return;
 
-		setShowLiveMindMap(true);
 		setIsGlobalRunning(true);
 		const workflowStartMs = Date.now();
 		const provisionedAt = new Date().toISOString();
@@ -680,10 +721,10 @@ export default function Layout() {
 		let anyBlocked = false;
 
 		try {
-			// Strictly sequenced directional workflow: 01 -> 02 -> 03 -> 04
 			let upstreamDeliverable = '';
 			let upstreamAgentLabel: string | null = null;
 			for (const id of allIds) {
+				setFocusedAgentId(id);
 				const currentInst = instancesRef.current.find((i) => i.id === id);
 				const res = await executeInstancePipeline(
 					id,
@@ -772,10 +813,15 @@ export default function Layout() {
 					? 'block'
 					: 'mask';
 
+			const harnessContext = buildHarnessExecutionContext(inst.harness);
+			const systemDirective = [inst.customSystemPrompt, harnessContext]
+				.filter(Boolean)
+				.join('\n\n');
+
 			const auditedRes = await executeAuditedProviderCall({
 				model: inst.model,
 				prompt: message,
-				systemPrompt: inst.customSystemPrompt,
+				systemPrompt: systemDirective,
 				guardrailPolicy,
 			});
 
@@ -817,8 +863,8 @@ export default function Layout() {
 						modelUsed: auditedRes.modelUsed,
 						guardrailNote:
 							redactions > 0
-								? `Guardrails masked ${redactions} sensitive PII/Financial item(s) · Session memory audited`
-								: 'Guardrails verified · Session memory audited',
+								? `Guardrails masked ${redactions} sensitive PII/Financial item(s) · Harness (${inst.harness.substrate}) active`
+								: `Guardrails verified · Harness (${inst.harness.substrate}) active`,
 					},
 				],
 			}));
@@ -828,7 +874,6 @@ export default function Layout() {
 				err?.name === 'PiiGuardrailBlockedError';
 			if (isGuardrailRefusal) {
 				setByokErrorBanner(err?.message);
-				setShowByokConnector(true);
 			}
 			const purgedAt = recordAuditReceipt(
 				leaseId,
@@ -926,7 +971,6 @@ export default function Layout() {
 	// Unified 1-second tick for both Individual Instance Schedulers and Master Workflow Scheduler
 	useEffect(() => {
 		const timer = setInterval(() => {
-			// 1. Check individual instance schedules
 			instancesRef.current.forEach((inst) => {
 				if (!inst.schedule.isScheduledActive) return;
 				if (inst.status === 'running' || isGlobalRunningRef.current) return;
@@ -970,7 +1014,6 @@ export default function Layout() {
 				}
 			});
 
-			// 2. Check master workflow schedule
 			setIsMasterScheduled((currentlyScheduled) => {
 				if (!currentlyScheduled || isGlobalRunningRef.current) {
 					return currentlyScheduled;
@@ -1022,16 +1065,6 @@ export default function Layout() {
 		? instances[0].guardrails.piiPolicy
 		: null;
 
-	const totalWorkflowRuntimeMs = instances.reduce(
-		(acc, inst) => acc + inst.totalRuntimeMs,
-		0,
-	);
-
-	const totalProtectedItemsCount = instances.reduce(
-		(acc, inst) => acc + inst.totalRedactionsCount,
-		0,
-	);
-
 	const handleQuickDownloadWorkflowZip = () => {
 		const bundle = buildWorkflowFileBundle({
 			instances,
@@ -1043,7 +1076,10 @@ export default function Layout() {
 			lastPurgeReceipt,
 			auditLog,
 		});
-		const zipBlob = createZipBlob(bundle.archetype.rootFolderName, bundle.files);
+		const zipBlob = createZipBlob(
+			bundle.archetype.rootFolderName,
+			bundle.files,
+		);
 		const dateStamp = new Date().toISOString().slice(0, 10);
 		triggerBrowserDownload(
 			zipBlob,
@@ -1070,13 +1106,18 @@ export default function Layout() {
 		}
 	};
 
+	const visibleInstances =
+		gridLayout === 'focused'
+			? instances.filter((i) => i.id === focusedAgentId)
+			: instances;
+
 	return (
 		<div
 			data-theme={environmentTheme}
 			className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden transition-colors duration-200"
 		>
 			{/* Top Bar Contract: Strictly 3 Zones separated by gap-8 */}
-			<header className="flex items-center justify-between gap-8 px-5 py-2.5 bg-slate-950 border-b border-slate-800 shrink-0">
+			<header className="flex items-center justify-between gap-8 px-6 py-3.5 bg-slate-950 border-b border-slate-800 shrink-0">
 				{/* Zone 1: Single text element Brand Wordmark */}
 				<a
 					href="#workspace"
@@ -1089,8 +1130,8 @@ export default function Layout() {
 					Signals Agents
 				</a>
 
-				{/* Zone 2: 4 concise single-line navigation links */}
-				<nav className="flex items-center gap-6 text-xs font-medium text-slate-400">
+				{/* Zone 2: 5 concise single-line navigation links for separated pages */}
+				<nav className="flex items-center gap-7 text-xs font-medium text-slate-400 overflow-x-auto">
 					<button
 						type="button"
 						onClick={() => setActiveTab('workspace')}
@@ -1100,7 +1141,18 @@ export default function Layout() {
 								: ''
 						}`}
 					>
-						Workspace
+						Workflow Studio
+					</button>
+					<button
+						type="button"
+						onClick={() => setActiveTab('harness')}
+						className={`hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 ${
+							activeTab === 'harness'
+								? 'text-white underline underline-offset-8 decoration-indigo-500 decoration-2'
+								: ''
+						}`}
+					>
+						Harness Config
 					</button>
 					<button
 						type="button"
@@ -1111,18 +1163,18 @@ export default function Layout() {
 								: ''
 						}`}
 					>
-						Mind-Map & Handoffs
+						Mind-Map Stage
 					</button>
 					<button
 						type="button"
-						onClick={() => setActiveTab('schedules')}
+						onClick={() => setActiveTab('credentials')}
 						className={`hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 ${
-							activeTab === 'schedules'
+							activeTab === 'credentials'
 								? 'text-white underline underline-offset-8 decoration-indigo-500 decoration-2'
 								: ''
 						}`}
 					>
-						Schedules
+						Credentials &amp; Guardrails
 					</button>
 					<button
 						type="button"
@@ -1133,7 +1185,7 @@ export default function Layout() {
 								: ''
 						}`}
 					>
-						Export Log, Files & Audit
+						Exports &amp; Audit
 					</button>
 				</nav>
 
@@ -1143,12 +1195,12 @@ export default function Layout() {
 						type="button"
 						onClick={executeAllFourWorkflow}
 						disabled={isGlobalRunning || !superprompt.trim()}
-						className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-md transition-colors whitespace-nowrap shrink-0"
+						className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-md transition-colors whitespace-nowrap shrink-0"
 					>
 						{isGlobalRunning ? (
 							<>
 								<ReloadIcon className="w-3.5 h-3.5 animate-spin" />
-								<span>Executing 4-Agent Workflow...</span>
+								<span>Executing Workflow...</span>
 							</>
 						) : (
 							<>
@@ -1160,239 +1212,674 @@ export default function Layout() {
 				</div>
 			</header>
 
-			{/* Secondary Workspace Orchestration Bar: Topology, Models, Guardrails, BYOK Connector & Environment Toggle */}
-			<div className="px-5 py-2 bg-slate-900/80 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0 text-xs">
-				{/* Left: Directional Workflow Mode Indicator */}
-				<div className="flex items-center gap-2.5 flex-wrap">
-					<span className="text-slate-400 font-medium whitespace-nowrap">
-						Execution Mode:
-					</span>
-					<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
-						<button
-							type="button"
-							onClick={() => setTopology('directional')}
-							disabled={isGlobalRunning}
-							className="px-2.5 py-1 rounded text-xs font-medium bg-indigo-600 text-white whitespace-nowrap shrink-0"
+			{/* ===================================================================== */}
+			{/* PAGE 1: WORKFLOW STUDIO (Open, Spacious, Uncluttered Canvas)           */}
+			{/* ===================================================================== */}
+			{activeTab === 'workspace' && (
+				<div className="flex-1 min-h-0 overflow-y-auto scroll-smooth">
+					<div className="max-w-[1600px] w-full mx-auto px-6 py-6 space-y-6">
+						{/* Guardrail / BYOK Error Alert Banner (Only shown when triggered) */}
+						{byokErrorBanner && (
+							<div className="p-4 rounded-lg bg-red-950/60 border border-red-700/80 text-red-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+								<div className="font-mono">{byokErrorBanner}</div>
+								<div className="flex items-center gap-3 shrink-0">
+									<button
+										type="button"
+										onClick={() => setActiveTab('credentials')}
+										className="px-3 py-1.5 rounded bg-red-900/70 hover:bg-red-800 text-white font-sans font-medium"
+									>
+										Connect API Key or Local Endpoint →
+									</button>
+									<button
+										type="button"
+										onClick={() => setByokErrorBanner(null)}
+										className="text-red-300 hover:text-white underline"
+									>
+										Dismiss
+									</button>
+								</div>
+							</div>
+						)}
+
+						{/* Section 1: Master Workflow Objective & Studio Controls Card */}
+						<div className="p-6 bg-slate-900/90 border border-slate-800 rounded-lg space-y-4">
+							<div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+								<div className="space-y-1">
+									<div className="flex items-center gap-2 text-xs text-slate-400">
+										<span className="font-semibold text-white">
+											01. Master Directional Workflow Objective
+										</span>
+										<span aria-hidden="true">·</span>
+										<span>Sequenced 01 → 02 → 03 → 04</span>
+										<span aria-hidden="true">·</span>
+										<span>{CmdOrCtrlKey}+Enter to execute</span>
+									</div>
+									<div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+										<button
+											type="button"
+											onClick={() => setActiveTab('harness')}
+											className="text-indigo-300 hover:underline font-mono"
+										>
+											Harness: {instances[0]?.harness.schemaVersion} (
+											{instances[0]?.harness.substrate} ·{' '}
+											{instances[0]?.harness.validationCensus.skills} skills ·{' '}
+											{instances[0]?.harness.validationCensus.alwaysOnChars}{' '}
+											chars)
+										</button>
+										<span aria-hidden="true">·</span>
+										<button
+											type="button"
+											onClick={() => setActiveTab('credentials')}
+											className={`font-mono hover:underline ${
+												isByokConnected ? 'text-emerald-400' : 'text-amber-300'
+											}`}
+										>
+											{isByokConnected
+												? `BYOK Connected (${activeByokStatus.providerId.toUpperCase()})`
+												: 'BYOK Unconfigured (Click to Connect Key / Local Model)'}
+										</button>
+										<span aria-hidden="true">·</span>
+										<button
+											type="button"
+											onClick={() => setActiveTab('credentials')}
+											className="text-slate-300 hover:underline"
+										>
+											Guardrails: {allSameGuardrailPolicy?.toUpperCase() || 'CUSTOM'}
+										</button>
+									</div>
+								</div>
+
+								{/* Quick Objective Presets */}
+								<div className="flex items-center gap-3 text-xs flex-wrap">
+									<span className="text-slate-500">Objective Presets:</span>
+									<button
+										type="button"
+										onClick={() => setSuperprompt(SAMPLE_WORKFLOW_PROMPTS[0])}
+										className="text-indigo-400 hover:text-indigo-300 hover:underline"
+									>
+										Rate-Limiter
+									</button>
+									<span className="text-slate-700">·</span>
+									<button
+										type="button"
+										onClick={() => setSuperprompt(SAMPLE_WORKFLOW_PROMPTS[1])}
+										className="text-emerald-400 hover:text-emerald-300 hover:underline"
+									>
+										PCI &amp; PII Audit
+									</button>
+									<span className="text-slate-700">·</span>
+									<button
+										type="button"
+										onClick={() => setSuperprompt(SAMPLE_WORKFLOW_PROMPTS[2])}
+										className="text-indigo-400 hover:text-indigo-300 hover:underline"
+									>
+										Ledger Migration
+									</button>
+									<span className="text-slate-700">·</span>
+									<button
+										type="button"
+										onClick={() => setSuperprompt(SAMPLE_WORKFLOW_PROMPTS[3])}
+										className="text-amber-300 hover:text-amber-200 hover:underline"
+									>
+										ADK &amp; Bazel Deploy (oc)
+									</button>
+								</div>
+							</div>
+
+							<div className="flex flex-col lg:flex-row items-stretch gap-3">
+								<textarea
+									rows={2}
+									value={superprompt}
+									onChange={(e) => setSuperprompt(e.target.value)}
+									onKeyDown={(e) => {
+										if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+											e.preventDefault();
+											executeAllFourWorkflow();
+										}
+									}}
+									placeholder="Enter a workflow objective to execute sequentially across all 4 agents..."
+									className="flex-1 px-4 py-3 text-xs font-mono leading-relaxed bg-slate-950 border border-slate-800 rounded-md text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-y"
+								/>
+
+								<div className="flex items-center gap-2.5 shrink-0">
+									<div className="bg-slate-950 border border-slate-800 rounded-md">
+										<PromptCritic
+											active={false}
+											superprompt={superprompt}
+											setSuperprompt={setSuperprompt}
+										/>
+									</div>
+
+									<button
+										type="button"
+										onClick={executeAllFourWorkflow}
+										disabled={isGlobalRunning || !superprompt.trim()}
+										className="h-full min-h-[44px] px-5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold rounded-md transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
+									>
+										{isGlobalRunning ? (
+											<>
+												<ReloadIcon className="w-4 h-4 animate-spin" />
+												<span>Running Steps...</span>
+											</>
+										) : (
+											<>
+												<PlayIcon className="w-4 h-4" />
+												<span>Run 4-Agent Workflow</span>
+											</>
+										)}
+									</button>
+								</div>
+							</div>
+
+							{/* Clean Workspace Toolbar: Layout Mode, Model Preset, Environment & Quick Exports */}
+							<div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-4 text-xs">
+								{/* Left: Spacious View Layout Switcher */}
+								<div className="flex items-center gap-3 flex-wrap">
+									<span className="text-slate-400 font-medium">
+										Workspace Layout:
+									</span>
+									<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
+										<button
+											type="button"
+											onClick={() => setGridLayout('grid')}
+											className={`px-3 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+												gridLayout === 'grid'
+													? 'bg-indigo-600 text-white'
+													: 'text-slate-400 hover:text-slate-200'
+											}`}
+										>
+											2x2 Open Grid
+										</button>
+										<button
+											type="button"
+											onClick={() => setGridLayout('focused')}
+											className={`px-3 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+												gridLayout === 'focused'
+													? 'bg-indigo-600 text-white'
+													: 'text-slate-400 hover:text-slate-200'
+											}`}
+										>
+											Focused Single Agent
+										</button>
+										<button
+											type="button"
+											onClick={() => setGridLayout('columns')}
+											className={`px-3 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+												gridLayout === 'columns'
+													? 'bg-indigo-600 text-white'
+													: 'text-slate-400 hover:text-slate-200'
+											}`}
+										>
+											4 Columns
+										</button>
+									</div>
+
+									{/* Model Presets */}
+									<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
+										<button
+											type="button"
+											onClick={() =>
+												applyModelPreset('same', 'gemini-2.5-flash')
+											}
+											disabled={isGlobalRunning}
+											className={`px-2.5 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+												allSameModel === 'gemini-2.5-flash'
+													? 'bg-slate-800 text-white'
+													: 'text-slate-400 hover:text-slate-200'
+											}`}
+										>
+											4x Gemini 2.5 Flash
+										</button>
+										<button
+											type="button"
+											onClick={() => applyModelPreset('mixed')}
+											disabled={isGlobalRunning}
+											className={`px-2.5 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+												!allSameModel
+													? 'bg-slate-800 text-white'
+													: 'text-slate-400 hover:text-slate-200'
+											}`}
+										>
+											4x Multi-Provider
+										</button>
+									</div>
+								</div>
+
+								{/* Right: Environment Theme, Optional Inline Mind-Map & Exports */}
+								<div className="flex items-center gap-3 flex-wrap">
+									<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
+										{ENVIRONMENT_THEMES.map((theme) => (
+											<button
+												key={theme.id}
+												type="button"
+												onClick={() => setEnvironmentTheme(theme.id)}
+												className={`px-2.5 py-1 rounded text-[11px] font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+													environmentTheme === theme.id
+														? 'bg-indigo-600 text-white'
+														: 'text-slate-400 hover:text-slate-200'
+												}`}
+												title={theme.description}
+											>
+												<span
+													className="w-2 h-2 rounded-full shrink-0 border border-white/30"
+													style={{ backgroundColor: theme.swatch }}
+												/>
+												<span>{theme.shortLabel}</span>
+											</button>
+										))}
+									</div>
+
+									<button
+										type="button"
+										onClick={() => setShowInlineMindMap((prev) => !prev)}
+										className="px-2.5 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs transition-colors whitespace-nowrap"
+									>
+										{showInlineMindMap
+											? 'Hide Inline Mind-Map'
+											: 'Preview Inline Mind-Map'}
+									</button>
+
+									<button
+										type="button"
+										onClick={handleQuickDownloadResultsLog}
+										className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-xs transition-colors whitespace-nowrap"
+									>
+										<FileTextIcon className="w-3.5 h-3.5 text-indigo-400" />
+										<span>Export .log</span>
+									</button>
+
+									<button
+										type="button"
+										onClick={handleQuickDownloadWorkflowZip}
+										className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-emerald-400 text-xs transition-colors whitespace-nowrap"
+									>
+										<DownloadIcon className="w-3.5 h-3.5" />
+										<span>Download .zip</span>
+									</button>
+
+									<button
+										type="button"
+										onClick={handleResetAllInstances}
+										disabled={isGlobalRunning}
+										className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors whitespace-nowrap"
+									>
+										<ResetIcon className="w-3.5 h-3.5" />
+										<span>Reset</span>
+									</button>
+								</div>
+							</div>
+						</div>
+
+						{/* Section 2: Directional Handoff Progress Strip (01 -> 02 -> 03 -> 04) */}
+						<div className="p-4 bg-slate-900/90 border border-slate-800 rounded-lg flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 text-xs">
+							<div className="flex items-center gap-2 shrink-0">
+								<span className="font-semibold text-slate-200">
+									02. Sequenced Handoff Pipeline
+								</span>
+								<span className="text-slate-500" aria-hidden="true">
+									·
+								</span>
+								<span className="text-slate-400">
+									Click any agent stage to focus or jump to its workflow pane
+								</span>
+							</div>
+
+							<div className="flex items-center gap-2 overflow-x-auto py-0.5">
+								{instances.map((inst, idx) => {
+									const activeStep = inst.steps.find(
+										(s) => s.status === 'running',
+									);
+									const doneCount = inst.steps.filter(
+										(s) => s.status === 'completed',
+									).length;
+									const activePct = activeStep
+										? activeStep.progressPercent ?? 45
+										: inst.status === 'completed'
+										? 100
+										: Math.round(
+												(doneCount / Math.max(1, inst.steps.length)) * 100,
+										  );
+									const isFocused =
+										gridLayout === 'focused' && focusedAgentId === inst.id;
+
+									return (
+										<React.Fragment key={inst.id}>
+											<button
+												type="button"
+												onClick={() => {
+													setFocusedAgentId(inst.id);
+													document
+														.getElementById(`agent-pane-${inst.id}`)
+														?.scrollIntoView({
+															behavior: 'smooth',
+															block: 'nearest',
+														});
+												}}
+												className={`px-3.5 py-2 rounded-md border flex flex-col gap-1.5 shrink-0 transition-colors text-left min-w-[195px] ${
+													inst.status === 'running'
+														? 'bg-indigo-950/60 border-indigo-500 text-white'
+														: isFocused
+														? 'bg-indigo-950/40 border-indigo-500/80 text-white'
+														: inst.status === 'completed'
+														? 'bg-emerald-950/30 border-emerald-700/50 text-emerald-300'
+														: inst.status === 'blocked' ||
+														  inst.status === 'error'
+														? 'bg-red-950/40 border-red-700/60 text-red-300'
+														: 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+												}`}
+											>
+												<div className="flex items-center justify-between gap-2 w-full">
+													<div className="flex items-center gap-1.5 min-w-0">
+														<span className="font-mono font-semibold text-xs text-indigo-400">
+															0{inst.id}
+														</span>
+														<span className="font-medium text-slate-200 truncate max-w-[125px]">
+															{inst.agentRole}
+														</span>
+													</div>
+													<span className="font-mono tabular-nums text-[11px] text-amber-300 shrink-0">
+														{inst.status === 'running' && activeStep
+															? `S${activeStep.stepNumber} · ${activePct}%`
+															: `${doneCount}/${inst.steps.length}`}
+													</span>
+												</div>
+												<div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+													<div
+														className={`h-full rounded-full transition-all duration-150 ${
+															inst.status === 'completed'
+																? 'bg-emerald-500'
+																: inst.status === 'running'
+																? 'step-progress-active-bar'
+																: 'bg-slate-700'
+														}`}
+														style={{ width: `${activePct}%` }}
+													/>
+												</div>
+											</button>
+
+											{idx < instances.length - 1 && (
+												<span className="text-slate-600 font-mono text-xs shrink-0 px-0.5">
+													<ArrowRightIcon className="w-4 h-4 text-slate-500" />
+												</span>
+											)}
+										</React.Fragment>
+									);
+								})}
+							</div>
+						</div>
+
+						{/* Optional Inline Mind-Work-Done Preview (Only shown when explicitly toggled) */}
+						{showInlineMindMap && (
+							<div className="h-[340px] shrink-0">
+								<WorkflowMindMap
+									instances={instances}
+									topology={topology}
+									superprompt={superprompt}
+									onChangeSuperprompt={setSuperprompt}
+									onChangeTopology={setTopology}
+									onUpdateInstance={updateInstance}
+									onRunAllWorkflow={executeAllFourWorkflow}
+									onRunSingleInstance={handleRunSingleInstance}
+									isGlobalRunning={isGlobalRunning}
+									activeGlobalLeaseId={activeGlobalLeaseId}
+									lastPurgeReceipt={lastPurgeReceipt}
+									compactMode={true}
+									onExpandFullStage={() => setActiveTab('topology')}
+									environmentTheme={environmentTheme}
+									onOpenExportCenter={() => setActiveTab('audit')}
+									onDownloadWorkflowBundleZip={handleQuickDownloadWorkflowZip}
+								/>
+							</div>
+						)}
+
+						{/* Section 3: Spacious Agent Workflow Panes */}
+						<div
+							id="workspace-agent-panes"
+							className={
+								gridLayout === 'columns'
+									? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 pb-10'
+									: gridLayout === 'focused'
+									? 'grid grid-cols-1 gap-6 pb-10 max-w-5xl mx-auto w-full'
+									: 'grid grid-cols-1 lg:grid-cols-2 gap-6 pb-10'
+							}
 						>
-							Sequenced Directional Workflow (01 → 02 → 03 → 04)
-						</button>
-					</div>
-				</div>
-
-				{/* Center: 4x Same Model vs 4x Different Models + PII/Financial Guardrail Preset */}
-				<div className="flex items-center gap-3 flex-wrap">
-					<div className="flex items-center gap-1.5">
-						<span className="text-slate-400 font-medium whitespace-nowrap">
-							Models:
-						</span>
-						<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
-							<button
-								type="button"
-								onClick={() => applyModelPreset('same', 'gemini-2.5-flash')}
-								disabled={isGlobalRunning}
-								className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-									allSameModel === 'gemini-2.5-flash'
-										? 'bg-slate-800 text-white'
-										: 'text-slate-400 hover:text-slate-200'
-								}`}
-							>
-								4x Same (Gemini 2.5 Flash)
-							</button>
-							<button
-								type="button"
-								onClick={() => applyModelPreset('same', 'gpt-4o-mini')}
-								disabled={isGlobalRunning}
-								className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-									allSameModel === 'gpt-4o-mini'
-										? 'bg-slate-800 text-white'
-										: 'text-slate-400 hover:text-slate-200'
-								}`}
-							>
-								4x Same (GPT-4o Mini)
-							</button>
-							<button
-								type="button"
-								onClick={() => applyModelPreset('mixed')}
-								disabled={isGlobalRunning}
-								className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-									!allSameModel
-										? 'bg-slate-800 text-white'
-										: 'text-slate-400 hover:text-slate-200'
-								}`}
-							>
-								4x Multi-Provider Models
-							</button>
-						</div>
-					</div>
-
-					{/* Financial & Personal Info Safety Guardrail Mode */}
-					<div className="flex items-center gap-1.5">
-						<LockClosedIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-						<span className="text-slate-400 font-medium whitespace-nowrap">
-							Guardrails:
-						</span>
-						<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
-							<button
-								type="button"
-								onClick={() => applyGlobalGuardrailPolicy('mask')}
-								disabled={isGlobalRunning}
-								className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-									allSameGuardrailPolicy === 'mask'
-										? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-										: 'text-slate-400 hover:text-slate-200'
-								}`}
-								title="Automatically mask SSNs, credit cards, bank accounts, emails, and phone numbers"
-							>
-								Auto-Redact
-							</button>
-							<button
-								type="button"
-								onClick={() => applyGlobalGuardrailPolicy('block')}
-								disabled={isGlobalRunning}
-								className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-									allSameGuardrailPolicy === 'block'
-										? 'bg-red-600/30 text-red-300 border border-red-500/40'
-										: 'text-slate-400 hover:text-slate-200'
-								}`}
-								title="Immediately block execution if raw financial or personal data is detected"
-							>
-								Strict Block
-							</button>
-						</div>
-					</div>
-				</div>
-
-				{/* Right: Environment Toggle (Light / Dark / Pastel / Earthy) + BYOK Connector + View Toggle */}
-				<div className="flex items-center gap-2.5 flex-wrap text-slate-400">
-					{/* Environment Toggle: Light, Dark, Pastel, or Earthy Tones */}
-					<div className="flex items-center gap-1.5">
-						<span className="text-slate-400 font-medium whitespace-nowrap text-[11px]">
-							Environment:
-						</span>
-						<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
-							{ENVIRONMENT_THEMES.map((theme) => (
-								<button
-									key={theme.id}
-									type="button"
-									onClick={() => setEnvironmentTheme(theme.id)}
-									className={`px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
-										environmentTheme === theme.id
-											? 'bg-indigo-600 text-white'
-											: 'text-slate-400 hover:text-slate-200'
-									}`}
-									title={theme.description}
+							{visibleInstances.map((instance) => (
+								<div
+									key={instance.id}
+									id={`agent-pane-${instance.id}`}
+									className="flex flex-col"
 								>
-									<span
-										className="w-2 h-2 rounded-full shrink-0 border border-white/30"
-										style={{ backgroundColor: theme.swatch }}
+									<Pane
+										instance={instance}
+										topology={topology}
+										onUpdateInstance={updateInstance}
+										onRunSingleInstance={handleRunSingleInstance}
+										onToggleInstanceSchedule={handleToggleInstanceSchedule}
+										onResetInstance={handleResetInstance}
+										onSendDirectChat={handleSendDirectChat}
+										isGlobalRunning={isGlobalRunning}
+										keyRoutingScope={keyRoutingScope}
+										isByokConnected={isByokConnected}
+										onOpenByokConnector={() => setActiveTab('credentials')}
+										onOpenHarnessStudio={() => setActiveTab('harness')}
 									/>
-									<span>{theme.shortLabel}</span>
-								</button>
+								</div>
 							))}
 						</div>
 					</div>
-
-					{/* Front-End BYOK Connector Toggle Button */}
-					<button
-						type="button"
-						onClick={() => {
-							setActiveTab('workspace');
-							setShowByokConnector((prev) => !prev);
-						}}
-						className={`px-2.5 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
-							showByokConnector
-								? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-								: 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
-						}`}
-						title="Toggle Front-End Bring Your Own API Key (BYOK) Ephemeral Lease Connector"
-					>
-						<LockClosedIcon className="w-3 h-3 text-emerald-400" />
-						<span>
-							{activeGlobalLeaseId
-								? `BYOK Lease Active (${activeGlobalLeaseId})`
-								: 'BYOK Key Connector'}
-						</span>
-					</button>
-
-					<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
-						<button
-							type="button"
-							onClick={() => setShowLiveMindMap((prev) => !prev)}
-							className={`px-2 py-0.5 rounded text-[11px] font-medium whitespace-nowrap shrink-0 ${
-								showLiveMindMap
-									? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-									: 'text-slate-400 hover:text-slate-200'
-							}`}
-							title="Toggle interactive Mind-Work-Done visual stage above agent panes"
-						>
-							{showLiveMindMap ? 'Mind-Map: Active' : 'Show Mind-Map'}
-						</button>
-						<button
-							type="button"
-							onClick={() => setGridLayout('columns')}
-							className={`px-2 py-0.5 rounded text-[11px] font-medium whitespace-nowrap shrink-0 ${
-								gridLayout === 'columns'
-									? 'bg-slate-800 text-white'
-									: 'text-slate-400 hover:text-slate-200'
-							}`}
-						>
-							4 Columns
-						</button>
-						<button
-							type="button"
-							onClick={() => setGridLayout('grid')}
-							className={`px-2 py-0.5 rounded text-[11px] font-medium whitespace-nowrap shrink-0 ${
-								gridLayout === 'grid'
-									? 'bg-slate-800 text-white'
-									: 'text-slate-400 hover:text-slate-200'
-							}`}
-						>
-							2x2 Grid
-						</button>
-					</div>
-
-					<button
-						type="button"
-						onClick={handleResetAllInstances}
-						disabled={isGlobalRunning}
-						className="inline-flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors whitespace-nowrap shrink-0"
-						title="Reset all 4 instances"
-					>
-						<ResetIcon className="w-3.5 h-3.5" />
-						<span>Reset</span>
-					</button>
 				</div>
-			</div>
+			)}
 
-			{/* Main Content Area by Active Navigation View */}
-			{activeTab === 'workspace' && (
-				<div className="flex-1 min-h-0 flex flex-col overflow-y-auto p-3.5 pb-8 gap-3.5 scroll-smooth">
-					{/* FRONT-END FACING BRING YOUR OWN API KEY (BYOK) & EPHEMERAL LEASE CONNECTOR */}
-					{showByokConnector && (
-						<div className="p-3 bg-slate-900/90 border border-slate-800 rounded-lg shrink-0 space-y-2.5 text-xs">
-							<div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
-								<div className="flex items-center gap-2 flex-wrap">
-									<span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono text-[10px] font-semibold">
-										BYOK CONNECTOR
-									</span>
-									<span className="font-semibold text-slate-100">
-										Front-End Ephemeral API Key & 4-Agent Session Multiplexer
-									</span>
-									<span className="text-slate-500" aria-hidden="true">
-										·
-									</span>
-									<span className="text-slate-400 text-[11px] font-mono">
+			{/* ===================================================================== */}
+			{/* PAGE 2: HARNESS CONFIGURATION STUDIO (harness2.v1 for All Workflows)   */}
+			{/* ===================================================================== */}
+			{activeTab === 'harness' && (
+				<div className="flex-1 min-h-0 overflow-y-auto scroll-smooth">
+					<HarnessConfigStudio
+						instances={instances}
+						onUpdateInstance={updateInstance}
+						onApplyHarnessToAll={handleApplyHarnessToAll}
+						onReturnToWorkspace={() => setActiveTab('workspace')}
+					/>
+				</div>
+			)}
+
+			{/* ===================================================================== */}
+			{/* PAGE 3: MIND-MAP STAGE & PER-AGENT SYSTEM PROMPT MATRIX               */}
+			{/* ===================================================================== */}
+			{activeTab === 'topology' && (
+				<div className="flex-1 min-h-0 overflow-y-auto p-6">
+					<div className="max-w-[1520px] w-full mx-auto space-y-8">
+						<div className="h-[600px] shrink-0">
+							<WorkflowMindMap
+								instances={instances}
+								topology={topology}
+								superprompt={superprompt}
+								onChangeSuperprompt={setSuperprompt}
+								onChangeTopology={setTopology}
+								onUpdateInstance={updateInstance}
+								onRunAllWorkflow={executeAllFourWorkflow}
+								onRunSingleInstance={handleRunSingleInstance}
+								isGlobalRunning={isGlobalRunning}
+								activeGlobalLeaseId={activeGlobalLeaseId}
+								lastPurgeReceipt={lastPurgeReceipt}
+								compactMode={false}
+								environmentTheme={environmentTheme}
+								onOpenExportCenter={() => setActiveTab('audit')}
+								onDownloadWorkflowBundleZip={handleQuickDownloadWorkflowZip}
+							/>
+						</div>
+
+						<div className="space-y-5">
+							<div className="flex items-center justify-between border-b border-slate-800 pb-4">
+								<div>
+									<h2 className="text-base font-semibold text-white">
+										Per-Agent System Prompts, Harness &amp; Handoff Matrix
+									</h2>
+									<p className="text-xs text-slate-400 mt-1">
+										Customize each agent&apos;s unique system prompt and inspect
+										its step pipeline alongside the Mind-Work-Done stage above.
+									</p>
+								</div>
+								<div className="flex items-center gap-3">
+									<button
+										type="button"
+										onClick={() => setActiveTab('harness')}
+										className="px-3.5 py-2 text-xs font-medium bg-slate-900 hover:bg-slate-800 border border-slate-800 text-indigo-300 rounded-md transition-colors whitespace-nowrap"
+									>
+										Configure Agent Harnesses →
+									</button>
+									<button
+										type="button"
+										onClick={() => setActiveTab('workspace')}
+										className="px-3.5 py-2 text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-colors whitespace-nowrap"
+									>
+										Return to Workflow Studio
+									</button>
+								</div>
+							</div>
+
+							{/* Visual Directional Flow Cards */}
+							<div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 pb-8">
+								{instances.map((inst, idx) => (
+									<div
+										key={inst.id}
+										className="p-5 bg-slate-900 border border-slate-800 rounded-lg flex flex-col justify-between space-y-4"
+									>
+										<div className="space-y-2">
+											<div className="flex items-center justify-between text-xs text-slate-400 font-mono tabular-nums">
+												<span>AGENT 0{inst.id}</span>
+												<span>{inst.totalRuntimeMs.toLocaleString()}ms</span>
+											</div>
+											<h3 className="text-sm font-semibold text-white">
+												{inst.name}
+											</h3>
+											<p className="text-xs text-indigo-400 font-medium">
+												{inst.agentRole}
+											</p>
+											<div className="text-xs text-slate-400 pt-1 flex items-center justify-between">
+												<span>
+													Model:{' '}
+													<span className="text-slate-200">{inst.model}</span>
+												</span>
+												<span className="font-mono text-indigo-300">
+													{inst.harness.substrate}
+												</span>
+											</div>
+										</div>
+
+										{/* Unique System Prompt Preview / Quick Edit */}
+										<div className="space-y-1.5 pt-3 border-t border-slate-800 text-xs">
+											<label className="block text-slate-400 font-medium">
+												Unique Agent System Prompt:
+											</label>
+											<textarea
+												rows={4}
+												value={inst.customSystemPrompt}
+												onChange={(e) =>
+													updateInstance(inst.id, (prev) => ({
+														...prev,
+														customSystemPrompt: e.target.value,
+													}))
+												}
+												className="w-full p-2.5 text-[11px] font-mono bg-slate-950 border border-slate-800 rounded text-slate-200 focus:outline-none focus:border-indigo-500 resize-none"
+											/>
+										</div>
+
+										<div className="space-y-1.5 pt-3 border-t border-slate-800 text-xs">
+											<div className="text-slate-400 font-medium">
+												Execution Steps ({inst.steps.length}):
+											</div>
+											{inst.steps.map((s) => (
+												<div
+													key={s.id}
+													className="flex items-center justify-between text-[11px] text-slate-300 font-mono tabular-nums"
+												>
+													<span className="truncate pr-2 font-sans">
+														{s.title}
+													</span>
+													<span>
+														{s.durationMs !== undefined
+															? `${s.durationMs}ms`
+															: s.status}
+													</span>
+												</div>
+											))}
+										</div>
+
+										<div className="pt-3 border-t border-slate-800 text-[11px] text-slate-400 space-y-1">
+											<div>
+												Guardrails: PII {inst.guardrails.piiPolicy.toUpperCase()}{' '}
+												· Fin {inst.guardrails.financialPolicy.toUpperCase()}
+											</div>
+											<div>
+												{idx < 3 ? (
+													<span className="text-indigo-300">
+														Handoff Target → Renderance 0{inst.id + 1}
+													</span>
+												) : (
+													<span className="text-emerald-400">
+														Terminal Synthesis Node → Triggers Key Purge
+													</span>
+												)}
+											</div>
+										</div>
+									</div>
+								))}
+							</div>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* ===================================================================== */}
+			{/* PAGE 4: CREDENTIALS, GUARDRAILS & SCHEDULES (Dedicated Open Page)     */}
+			{/* ===================================================================== */}
+			{activeTab === 'credentials' && (
+				<div className="flex-1 min-h-0 overflow-y-auto p-6">
+					<div className="max-w-6xl mx-auto py-2 space-y-8">
+						{/* Page Header */}
+						<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+							<div>
+								<h1 className="text-xl font-semibold text-white">
+									Ephemeral BYOK Credentials, Safety Guardrails &amp; Schedules
+								</h1>
+								<p className="text-sm text-slate-400 mt-1">
+									Connect your personal provider API key or local HTTP model
+									endpoint in page-session RAM, configure PII/financial
+									redaction rules, and manage execution timers.
+								</p>
+							</div>
+							<button
+								type="button"
+								onClick={() => setActiveTab('workspace')}
+								className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-colors whitespace-nowrap shrink-0"
+							>
+								Return to Workflow Studio
+							</button>
+						</div>
+
+						{/* Section 1: Front-End BYOK Ephemeral Credential Connector */}
+						<div className="p-6 bg-slate-900/90 border border-slate-800 rounded-lg space-y-5 text-xs">
+							<div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+								<div className="space-y-1">
+									<div className="flex items-center gap-2">
+										<LockClosedIcon className="w-4 h-4 text-emerald-400" />
+										<h2 className="text-sm font-semibold text-white">
+											01. Front-End BYOK Ephemeral Session Connector
+										</h2>
+									</div>
+									<p className="text-xs text-slate-400 font-mono">
 										{byokStatusMessage}
-									</span>
+									</p>
 								</div>
 
-								<div className="flex items-center gap-2 flex-wrap shrink-0">
-									{/* Key Routing Scope Selector */}
+								<div className="flex items-center gap-2.5 flex-wrap shrink-0">
 									<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
 										<button
 											type="button"
 											onClick={() => setKeyRoutingScope('shared_four')}
-											className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
+											className={`px-2.5 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${
 												keyRoutingScope === 'shared_four'
 													? 'bg-indigo-600 text-white'
 													: 'text-slate-400 hover:text-slate-200'
@@ -1403,7 +1890,7 @@ export default function Layout() {
 										<button
 											type="button"
 											onClick={() => setKeyRoutingScope('per_instance')}
-											className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
+											className={`px-2.5 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${
 												keyRoutingScope === 'per_instance'
 													? 'bg-indigo-600 text-white'
 													: 'text-slate-400 hover:text-slate-200'
@@ -1416,16 +1903,14 @@ export default function Layout() {
 									<button
 										type="button"
 										onClick={handlePurgeByokNow}
-										className="px-2.5 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-emerald-400 font-mono text-[11px] transition-colors whitespace-nowrap"
-										title="Immediately purge all credentials from page-session memory"
+										className="px-3 py-1.5 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-emerald-400 font-mono text-xs transition-colors whitespace-nowrap"
 									>
 										Purge Session Memory Now
 									</button>
 								</div>
 							</div>
 
-							{/* Interactive Ephemeral Credential & Local Endpoint Form (Page Session Memory ONLY) */}
-							<div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 pt-1">
+							<div className="flex flex-col md:flex-row items-stretch md:items-center gap-3">
 								<select
 									aria-label="Select Provider"
 									value={selectedProviderId}
@@ -1435,7 +1920,7 @@ export default function Layout() {
 										setActiveProviderId(next);
 										setByokErrorBanner(null);
 									}}
-									className="px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs text-slate-100 font-medium shrink-0"
+									className="px-3 py-2 bg-slate-950 border border-slate-800 rounded text-xs text-slate-100 font-medium shrink-0"
 								>
 									{PROVIDER_REGISTRY.map((prov) => (
 										<option key={prov.providerId} value={prov.providerId}>
@@ -1452,14 +1937,14 @@ export default function Layout() {
 											value={localEndpointInput}
 											onChange={(e) => setLocalEndpointInput(e.target.value)}
 											placeholder="Local endpoint URL (e.g. http://localhost:1234/v1 or http://localhost:11434/v1)"
-											className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+											className="flex-1 px-3.5 py-2 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
 										/>
 										<input
 											type="text"
 											value={localModelInput}
 											onChange={(e) => setLocalModelInput(e.target.value)}
 											placeholder="Local model name (e.g. llama3.2)"
-											className="w-48 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+											className="w-52 px-3.5 py-2 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
 										/>
 									</>
 								) : (
@@ -1468,7 +1953,7 @@ export default function Layout() {
 										value={apiKeyInput}
 										onChange={(e) => setApiKeyInput(e.target.value)}
 										placeholder={`Paste personal ${selectedProviderId.toUpperCase()} API key (stored in page-session RAM only — never persisted)`}
-										className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+										className="flex-1 px-3.5 py-2 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
 									/>
 								)}
 
@@ -1476,7 +1961,7 @@ export default function Layout() {
 									type="button"
 									onClick={handleConnectByokSession}
 									disabled={isGlobalRunning}
-									className="px-3.5 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-xs transition-colors whitespace-nowrap shrink-0"
+									className="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-xs transition-colors whitespace-nowrap shrink-0"
 								>
 									{selectedProviderId === 'local'
 										? 'Connect Local Endpoint in RAM'
@@ -1485,12 +1970,12 @@ export default function Layout() {
 							</div>
 
 							{byokErrorBanner && (
-								<div className="p-2.5 rounded bg-red-950/60 border border-red-700/80 text-red-200 font-mono text-[11px] flex items-center justify-between gap-2">
+								<div className="p-3 rounded bg-red-950/60 border border-red-700/80 text-red-200 font-mono text-xs flex items-center justify-between gap-2">
 									<span>{byokErrorBanner}</span>
 									<button
 										type="button"
 										onClick={() => setByokErrorBanner(null)}
-										className="text-red-300 hover:text-white underline text-[10px] shrink-0"
+										className="text-red-300 hover:text-white underline text-xs shrink-0"
 									>
 										Dismiss
 									</button>
@@ -1498,11 +1983,11 @@ export default function Layout() {
 							)}
 
 							{/* 4-Renderance Key Binding Matrix */}
-							<div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 pt-1">
+							<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
 								{instances.map((inst) => (
 									<div
 										key={inst.id}
-										className="px-3 py-2 rounded bg-slate-950 border border-slate-800 flex items-center justify-between gap-2 text-[11px]"
+										className="p-3.5 rounded bg-slate-950 border border-slate-800 flex items-center justify-between gap-2 text-xs"
 									>
 										<div className="min-w-0">
 											<div className="flex items-center gap-1.5">
@@ -1513,14 +1998,14 @@ export default function Layout() {
 													{inst.name}
 												</span>
 											</div>
-											<div className="text-[10px] text-slate-400 font-mono truncate mt-0.5">
+											<div className="text-[11px] text-slate-400 font-mono truncate mt-1">
 												Model: {inst.model}
 											</div>
 										</div>
 
 										<div className="text-right font-mono tabular-nums shrink-0">
 											<div
-												className={`text-[10px] font-semibold ${
+												className={`text-[11px] font-semibold ${
 													inst.leaseStatus === 'active'
 														? 'text-amber-300'
 														: inst.leaseStatus === 'purged'
@@ -1529,517 +2014,228 @@ export default function Layout() {
 												}`}
 											>
 												{inst.leaseStatus === 'active'
-													? `ACTIVE (${inst.leaseId?.slice(0, 8)})`
+													? `ACTIVE`
 													: inst.leaseStatus === 'purged'
-													? 'AUTO-DELETED (0ms)'
+													? 'PURGED (0ms)'
 													: keyRoutingScope === 'shared_four'
-													? 'SHARED 4x LEASE'
-													: `SCOPED 0${inst.id} LEASE`}
+													? 'SHARED 4x'
+													: `SCOPED 0${inst.id}`}
 											</div>
-											<div className="text-[9px] text-slate-500">
-												Auto-purges on finish
+											<div className="text-[10px] text-slate-500">
+												Session RAM only
 											</div>
 										</div>
 									</div>
 								))}
 							</div>
 						</div>
-					)}
 
-					{/* VISIBLE MULTI-AGENT WORKFLOW & LIVE STEP HANDOFF PIPELINE BAR */}
-					<div className="px-3.5 py-2 bg-slate-900/90 border border-slate-800 rounded-lg shrink-0 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-2 text-xs">
-						<div className="flex items-center gap-2 shrink-0">
-							<span className="font-semibold text-slate-200">
-								Live Agent Workflow & Handoff Pipeline:
-							</span>
-							<span className="text-slate-400">
-								Sequential Step Handoffs (01 → 02 → 03 → 04)
-							</span>
-						</div>
-
-						<div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
-							{instances.map((inst, idx) => {
-								const activeStep = inst.steps.find(
-									(s) => s.status === 'running',
-								);
-								const doneCount = inst.steps.filter(
-									(s) => s.status === 'completed',
-								).length;
-								const activePct = activeStep
-									? activeStep.progressPercent ?? 45
-									: inst.status === 'completed'
-									? 100
-									: Math.round((doneCount / Math.max(1, inst.steps.length)) * 100);
-
-								return (
-									<React.Fragment key={inst.id}>
-										<button
-											type="button"
-											onClick={() => {
-												document
-													.getElementById(`agent-pane-${inst.id}`)
-													?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-											}}
-											className={`px-2.5 py-1 rounded border flex flex-col gap-1 shrink-0 transition-colors text-left min-w-[175px] ${
-												inst.status === 'running'
-													? 'bg-indigo-950/60 border-indigo-500 text-white'
-													: inst.status === 'completed'
-													? 'bg-emerald-950/30 border-emerald-700/50 text-emerald-300'
-													: inst.status === 'blocked' ||
-													  inst.status === 'error'
-													? 'bg-red-950/40 border-red-700/60 text-red-300'
-													: 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-											}`}
-											title={`Scroll to ${inst.name} workflow pane`}
-										>
-											<div className="flex items-center justify-between gap-2 w-full">
-												<div className="flex items-center gap-1.5 min-w-0">
-													<span className="font-mono font-semibold text-[11px]">
-														0{inst.id}
-													</span>
-													<span className="font-medium text-slate-200 truncate max-w-[110px]">
-														{inst.agentRole}
-													</span>
-												</div>
-												<span className="font-mono tabular-nums text-[10px] text-amber-300 shrink-0">
-													{inst.status === 'running' && activeStep
-														? `S${activeStep.stepNumber} · ${activePct}%`
-														: `${doneCount}/${inst.steps.length}`}
-												</span>
-											</div>
-											<div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden">
-												<div
-													className={`h-full rounded-full transition-all duration-150 ${
-														inst.status === 'completed'
-															? 'bg-emerald-500'
-															: inst.status === 'running'
-															? 'step-progress-active-bar'
-															: 'bg-slate-700'
-													}`}
-													style={{ width: `${activePct}%` }}
-												/>
-											</div>
-										</button>
-
-										{idx < instances.length - 1 && (
-											<span className="text-slate-600 font-mono text-xs shrink-0 px-0.5">
-												<ArrowRightIcon className="w-3.5 h-3.5 text-slate-500" />
-											</span>
-										)}
-									</React.Fragment>
-								);
-							})}
-						</div>
-					</div>
-
-					{/* Interactive Mind-Work-Done Visual Stage (Automatically active when workflows run) */}
-					{showLiveMindMap && (
-						<div className="h-[300px] shrink-0">
-							<WorkflowMindMap
-								instances={instances}
-								topology={topology}
-								superprompt={superprompt}
-								onChangeSuperprompt={setSuperprompt}
-								onChangeTopology={setTopology}
-								onUpdateInstance={updateInstance}
-								onRunAllWorkflow={executeAllFourWorkflow}
-								onRunSingleInstance={handleRunSingleInstance}
-								isGlobalRunning={isGlobalRunning}
-								activeGlobalLeaseId={activeGlobalLeaseId}
-								lastPurgeReceipt={lastPurgeReceipt}
-								compactMode={true}
-								onExpandFullStage={() => setActiveTab('topology')}
-								environmentTheme={environmentTheme}
-								onOpenExportCenter={() => setActiveTab('audit')}
-								onDownloadWorkflowBundleZip={handleQuickDownloadWorkflowZip}
-							/>
-						</div>
-					)}
-
-					{/* Section Header Bar for 4 Agent Workflows + Quick Export Results Log & Folders Actions */}
-					<div
-						id="workspace-agent-panes"
-						className="flex flex-wrap items-center justify-between gap-2 pt-0.5 shrink-0 text-xs"
-					>
-						<div className="flex items-center gap-2">
-							<span className="font-semibold text-slate-200">
-								4-Agent Execution Workflows (Renderances 01–04)
-							</span>
-							<span className="text-slate-600" aria-hidden="true">
-								·
-							</span>
-							<span className="text-slate-400">
-								Real-time step progress bars, unique system prompts, BYOK lease connector & workflow-aware file exports
-							</span>
-						</div>
-						<div className="flex items-center gap-2.5 flex-wrap">
-							<button
-								type="button"
-								onClick={handleQuickDownloadResultsLog}
-								className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[11px] text-slate-200 font-medium cursor-pointer"
-								title="Download timestamped workflow-execution-results.log"
-							>
-								<FileTextIcon className="w-3 h-3 text-indigo-400" />
-								<span>Export Results Log (.log)</span>
-							</button>
-							<button
-								type="button"
-								onClick={handleQuickDownloadWorkflowZip}
-								className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-[11px] text-emerald-400 font-medium cursor-pointer"
-								title="Download complete workflow folder (.zip) with /logs, /deliverables, /agents, and /mind-map"
-							>
-								<DownloadIcon className="w-3 h-3" />
-								<span>Download Workflow Folder (.zip)</span>
-							</button>
-							<button
-								type="button"
-								onClick={() => setActiveTab('audit')}
-								className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer"
-							>
-								Browse Deliverable Files →
-							</button>
-							<span className="text-slate-700">·</span>
-							<button
-								type="button"
-								onClick={() => setShowByokConnector((prev) => !prev)}
-								className="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium"
-							>
-								{showByokConnector
-									? 'Hide BYOK Connector ↑'
-									: 'Show BYOK Connector ↓'}
-							</button>
-							<button
-								type="button"
-								onClick={() => setShowLiveMindMap((prev) => !prev)}
-								className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium"
-							>
-								{showLiveMindMap
-									? 'Collapse Mind-Map Stage ↑'
-									: 'Show Live Mind-Map Stage ↓'}
-							</button>
-						</div>
-					</div>
-
-					{/* 4 Agent Panes Grid — shrink-0 ensures full height rendering & smooth downward page scrolling */}
-					<div
-						className={
-							gridLayout === 'columns'
-								? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5 shrink-0 pb-4'
-								: 'grid grid-cols-1 lg:grid-cols-2 gap-3.5 shrink-0 pb-4'
-						}
-					>
-						{instances.map((instance) => (
-							<div
-								key={instance.id}
-								id={`agent-pane-${instance.id}`}
-								className="flex flex-col min-h-[480px]"
-							>
-								<Pane
-									instance={instance}
-									topology={topology}
-									onUpdateInstance={updateInstance}
-									onRunSingleInstance={handleRunSingleInstance}
-									onToggleInstanceSchedule={handleToggleInstanceSchedule}
-									onResetInstance={handleResetInstance}
-									onSendDirectChat={handleSendDirectChat}
-									isGlobalRunning={isGlobalRunning}
-									keyRoutingScope={keyRoutingScope}
-									isByokConnected={isByokConnected}
-									onOpenByokConnector={() => setShowByokConnector(true)}
-								/>
-							</div>
-						))}
-					</div>
-				</div>
-			)}
-
-			{activeTab === 'topology' && (
-				<div className="flex-1 min-h-0 flex flex-col overflow-y-auto p-4 gap-5">
-					<div className="h-[580px] shrink-0">
-						<WorkflowMindMap
-							instances={instances}
-							topology={topology}
-							superprompt={superprompt}
-							onChangeSuperprompt={setSuperprompt}
-							onChangeTopology={setTopology}
-							onUpdateInstance={updateInstance}
-							onRunAllWorkflow={executeAllFourWorkflow}
-							onRunSingleInstance={handleRunSingleInstance}
-							isGlobalRunning={isGlobalRunning}
-							activeGlobalLeaseId={activeGlobalLeaseId}
-							lastPurgeReceipt={lastPurgeReceipt}
-							compactMode={false}
-							environmentTheme={environmentTheme}
-							onOpenExportCenter={() => setActiveTab('audit')}
-							onDownloadWorkflowBundleZip={handleQuickDownloadWorkflowZip}
-						/>
-					</div>
-
-					<div className="max-w-7xl w-full mx-auto space-y-4">
-						<div className="flex items-center justify-between border-b border-slate-800 pb-3">
-							<div>
+						{/* Section 2: Global Safety Guardrail Policy */}
+						<div className="p-6 bg-slate-900/90 border border-slate-800 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+							<div className="space-y-1">
 								<h2 className="text-sm font-semibold text-white">
-									Per-Agent System Prompts & Handoff Guardrail Matrix
+									02. Global PII &amp; Financial Safety Guardrail Policy
 								</h2>
-								<p className="text-xs text-slate-400 mt-0.5">
-									Customize each agent&apos;s unique system prompt and inspect
-									its step pipeline alongside the interactive Mind-Work-Done
-									stage above.
+								<p className="text-xs text-slate-400">
+									Every outbound provider call passes through{' '}
+									<code className="font-mono text-indigo-300">
+										executeAuditedProviderCall
+									</code>{' '}
+									to scrub emails, phone numbers, SSNs, card PANs, and embedded
+									keys before leaving the browser.
 								</p>
 							</div>
-							<button
-								type="button"
-								onClick={() => setActiveTab('workspace')}
-								className="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded transition-colors whitespace-nowrap shrink-0"
-							>
-								Return to 4-Pane Workspace
-							</button>
-						</div>
-
-						{/* Visual Directional Flow Cards */}
-						<div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-							{instances.map((inst, idx) => (
-								<div
-									key={inst.id}
-									className="p-4 bg-slate-900 border border-slate-800 rounded-lg flex flex-col justify-between space-y-4"
-								>
-									<div className="space-y-2">
-										<div className="flex items-center justify-between text-xs text-slate-400 font-mono tabular-nums">
-											<span>AGENT 0{inst.id}</span>
-											<span>{inst.totalRuntimeMs.toLocaleString()}ms</span>
-										</div>
-										<h3 className="text-sm font-semibold text-white">
-											{inst.name}
-										</h3>
-										<p className="text-xs text-indigo-400 font-medium">
-											{inst.agentRole}
-										</p>
-										<div className="text-xs text-slate-400 pt-1">
-											Model: <span className="text-slate-200">{inst.model}</span>
-										</div>
-									</div>
-
-									{/* Unique System Prompt Preview / Quick Edit */}
-									<div className="space-y-1.5 pt-3 border-t border-slate-800 text-xs">
-										<label className="block text-slate-400 font-medium">
-											Unique Agent System Prompt:
-										</label>
-										<textarea
-											rows={4}
-											value={inst.customSystemPrompt}
-											onChange={(e) =>
-												updateInstance(inst.id, (prev) => ({
-													...prev,
-													customSystemPrompt: e.target.value,
-												}))
-											}
-											className="w-full p-2 text-[11px] font-mono bg-slate-950 border border-slate-800 rounded text-slate-200 focus:outline-none focus:border-indigo-500 resize-none"
-										/>
-									</div>
-
-									<div className="space-y-1.5 pt-3 border-t border-slate-800 text-xs">
-										<div className="text-slate-400 font-medium">
-											Execution Steps ({inst.steps.length}):
-										</div>
-										{inst.steps.map((s) => (
-											<div
-												key={s.id}
-												className="flex items-center justify-between text-[11px] text-slate-300 font-mono tabular-nums"
-											>
-												<span className="truncate pr-2 font-sans">
-													{s.title}
-												</span>
-												<span>
-													{s.durationMs !== undefined
-														? `${s.durationMs}ms`
-														: s.status}
-												</span>
-											</div>
-										))}
-									</div>
-
-									<div className="pt-3 border-t border-slate-800 text-[11px] text-slate-400 space-y-1">
-										<div>
-											Guardrails: PII {inst.guardrails.piiPolicy.toUpperCase()}{' '}
-											· Fin {inst.guardrails.financialPolicy.toUpperCase()}
-										</div>
-										<div>
-											{idx < 3 ? (
-												<span className="text-indigo-300">
-													Handoff Target → Renderance 0{inst.id + 1}
-												</span>
-											) : (
-												<span className="text-emerald-400">
-													Terminal Synthesis Node → Triggers Key Purge
-												</span>
-											)}
-										</div>
-									</div>
-								</div>
-							))}
-						</div>
-					</div>
-				</div>
-			)}
-
-			{activeTab === 'schedules' && (
-				<div className="flex-1 min-h-0 overflow-y-auto p-6">
-					<div className="max-w-6xl mx-auto space-y-6">
-						<div className="flex items-center justify-between border-b border-slate-800 pb-4">
-							<div>
-								<h2 className="text-lg font-semibold text-white">
-									Workflow Scheduler Matrix
-								</h2>
-								<p className="text-xs text-slate-400 mt-1">
-									Configure automated execution timers for the synchronized
-									4-instance workflow or independent renderance instances.
-								</p>
-							</div>
-
-							{/* Master Workflow Schedule Controls */}
-							<div className="flex items-center gap-3">
-								<select
-									value={masterScheduleMode}
-									onChange={(e) => {
-										setMasterScheduleMode(e.target.value as ScheduleMode);
-										setIsMasterScheduled(false);
-									}}
-									className="px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200"
-								>
-									<option value="immediate">Master: Immediate</option>
-									<option value="delayed">Master: Delayed (+10s)</option>
-									<option value="recurring">Master: Recurring (60s)</option>
-								</select>
-
+							<div className="flex items-center gap-2 shrink-0">
 								<button
 									type="button"
-									onClick={handleToggleMasterSchedule}
-									className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
-										isMasterScheduled
-											? 'bg-red-600/20 text-red-300 border border-red-500/40'
-											: 'bg-indigo-600 text-white hover:bg-indigo-500'
+									onClick={() => applyGlobalGuardrailPolicy('mask')}
+									disabled={isGlobalRunning}
+									className={`px-3.5 py-2 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+										allSameGuardrailPolicy === 'mask'
+											? 'bg-emerald-600 text-white'
+											: 'bg-slate-950 text-slate-300 border border-slate-800 hover:bg-slate-800'
 									}`}
 								>
-									{isMasterScheduled
-										? `Cancel Master Schedule (${masterCountdown}s)`
-										: masterScheduleMode === 'immediate'
-										? 'Run Master Workflow Now'
-										: 'Arm Master Schedule'}
+									Auto-Redact &amp; Mask (Recommended)
+								</button>
+								<button
+									type="button"
+									onClick={() => applyGlobalGuardrailPolicy('block')}
+									disabled={isGlobalRunning}
+									className={`px-3.5 py-2 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+										allSameGuardrailPolicy === 'block'
+											? 'bg-red-600 text-white'
+											: 'bg-slate-950 text-slate-300 border border-slate-800 hover:bg-slate-800'
+									}`}
+								>
+									Strict Block on Detection
 								</button>
 							</div>
 						</div>
 
-						{/* Per-Instance Schedule Table */}
-						<div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
-							<table className="w-full text-left border-collapse text-xs">
-								<thead>
-									<tr className="border-b border-slate-800 text-slate-400 bg-slate-950/60">
-										<th className="py-3 px-4 font-medium">Renderance</th>
-										<th className="py-3 px-4 font-medium">Assigned Model</th>
-										<th className="py-3 px-4 font-medium">Schedule Mode</th>
-										<th className="py-3 px-4 font-medium">Timing / Cadence</th>
-										<th className="py-3 px-4 font-medium text-right">
-											Runs Completed
-										</th>
-										<th className="py-3 px-4 font-medium text-right">
-											Countdown
-										</th>
-										<th className="py-3 px-4 font-medium text-right">
-											Actions
-										</th>
-									</tr>
-								</thead>
-								<tbody className="divide-y divide-slate-800">
-									{instances.map((inst) => (
-										<tr
-											key={inst.id}
-											className="hover:bg-slate-800/40 transition-colors"
-										>
-											<td className="py-3 px-4 font-medium text-white">
-												{inst.name} ·{' '}
-												<span className="text-slate-400 font-normal">
-													{inst.agentRole}
-												</span>
-											</td>
-											<td className="py-3 px-4 font-mono text-slate-300">
-												{inst.model}
-											</td>
-											<td className="py-3 px-4">
-												<select
-													value={inst.schedule.mode}
-													onChange={(e) =>
-														updateInstance(inst.id, (prev) => ({
-															...prev,
-															schedule: {
-																...prev.schedule,
-																mode: e.target.value as ScheduleMode,
-																isScheduledActive: false,
-																countdownSeconds: 0,
-															},
-														}))
-													}
-													className="px-2 py-1 bg-slate-950 border border-slate-800 rounded text-slate-200"
-												>
-													<option value="immediate">Immediate</option>
-													<option value="delayed">Delayed Start</option>
-													<option value="recurring">Recurring Interval</option>
-												</select>
-											</td>
-											<td className="py-3 px-4 font-mono tabular-nums text-slate-300">
-												{inst.schedule.mode === 'immediate'
-													? 'On demand'
-													: inst.schedule.mode === 'delayed'
-													? `+${inst.schedule.delaySeconds}s delay`
-													: `Every ${inst.schedule.intervalSeconds}s (max ${inst.schedule.maxRuns})`}
-											</td>
-											<td className="py-3 px-4 font-mono tabular-nums text-right text-slate-300">
-												{inst.schedule.runsCompleted}
-											</td>
-											<td className="py-3 px-4 font-mono tabular-nums text-right text-amber-300">
-												{inst.schedule.isScheduledActive
-													? `${inst.schedule.countdownSeconds}s`
-													: '—'}
-											</td>
-											<td className="py-3 px-4 text-right space-x-2">
-												{inst.schedule.mode !== 'immediate' && (
+						{/* Section 3: Workflow Scheduler Matrix */}
+						<div className="space-y-4">
+							<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+								<div>
+									<h2 className="text-sm font-semibold text-white">
+										03. Workflow Scheduler Matrix
+									</h2>
+									<p className="text-xs text-slate-400 mt-0.5">
+										Configure automated execution timers for the synchronized
+										4-instance workflow or independent renderance instances.
+									</p>
+								</div>
+
+								<div className="flex items-center gap-3">
+									<ClockIcon className="w-4 h-4 text-indigo-400" />
+									<select
+										value={masterScheduleMode}
+										onChange={(e) => {
+											setMasterScheduleMode(e.target.value as ScheduleMode);
+											setIsMasterScheduled(false);
+										}}
+										className="px-3 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200"
+									>
+										<option value="immediate">Master: Immediate</option>
+										<option value="delayed">Master: Delayed (+10s)</option>
+										<option value="recurring">Master: Recurring (60s)</option>
+									</select>
+
+									<button
+										type="button"
+										onClick={handleToggleMasterSchedule}
+										className={`px-3.5 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
+											isMasterScheduled
+												? 'bg-red-600/20 text-red-300 border border-red-500/40'
+												: 'bg-indigo-600 text-white hover:bg-indigo-500'
+										}`}
+									>
+										{isMasterScheduled
+											? `Cancel Master Schedule (${masterCountdown}s)`
+											: masterScheduleMode === 'immediate'
+											? 'Run Master Workflow Now'
+											: 'Arm Master Schedule'}
+									</button>
+								</div>
+							</div>
+
+							<div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
+								<table className="w-full text-left border-collapse text-xs">
+									<thead>
+										<tr className="border-b border-slate-800 text-slate-400 bg-slate-950/60">
+											<th className="py-3 px-4 font-medium">Renderance</th>
+											<th className="py-3 px-4 font-medium">Assigned Model</th>
+											<th className="py-3 px-4 font-medium">Schedule Mode</th>
+											<th className="py-3 px-4 font-medium">
+												Timing / Cadence
+											</th>
+											<th className="py-3 px-4 font-medium text-right">
+												Runs Completed
+											</th>
+											<th className="py-3 px-4 font-medium text-right">
+												Countdown
+											</th>
+											<th className="py-3 px-4 font-medium text-right">
+												Actions
+											</th>
+										</tr>
+									</thead>
+									<tbody className="divide-y divide-slate-800">
+										{instances.map((inst) => (
+											<tr
+												key={inst.id}
+												className="hover:bg-slate-800/40 transition-colors"
+											>
+												<td className="py-3 px-4 font-medium text-white">
+													{inst.name} ·{' '}
+													<span className="text-slate-400 font-normal">
+														{inst.agentRole}
+													</span>
+												</td>
+												<td className="py-3 px-4 font-mono text-slate-300">
+													{inst.model}
+												</td>
+												<td className="py-3 px-4">
+													<select
+														value={inst.schedule.mode}
+														onChange={(e) =>
+															updateInstance(inst.id, (prev) => ({
+																...prev,
+																schedule: {
+																	...prev.schedule,
+																	mode: e.target.value as ScheduleMode,
+																	isScheduledActive: false,
+																	countdownSeconds: 0,
+																},
+															}))
+														}
+														className="px-2 py-1 bg-slate-950 border border-slate-800 rounded text-slate-200"
+													>
+														<option value="immediate">Immediate</option>
+														<option value="delayed">Delayed Start</option>
+														<option value="recurring">
+															Recurring Interval
+														</option>
+													</select>
+												</td>
+												<td className="py-3 px-4 font-mono tabular-nums text-slate-300">
+													{inst.schedule.mode === 'immediate'
+														? 'On demand'
+														: inst.schedule.mode === 'delayed'
+														? `+${inst.schedule.delaySeconds}s delay`
+														: `Every ${inst.schedule.intervalSeconds}s (max ${inst.schedule.maxRuns})`}
+												</td>
+												<td className="py-3 px-4 font-mono tabular-nums text-right text-slate-300">
+													{inst.schedule.runsCompleted}
+												</td>
+												<td className="py-3 px-4 font-mono tabular-nums text-right text-amber-300">
+													{inst.schedule.isScheduledActive
+														? `${inst.schedule.countdownSeconds}s`
+														: '—'}
+												</td>
+												<td className="py-3 px-4 text-right space-x-2">
+													{inst.schedule.mode !== 'immediate' && (
+														<button
+															type="button"
+															onClick={() =>
+																handleToggleInstanceSchedule(inst.id)
+															}
+															className={`px-2.5 py-1 rounded text-xs font-medium ${
+																inst.schedule.isScheduledActive
+																	? 'bg-red-600/20 text-red-300'
+																	: 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+															}`}
+														>
+															{inst.schedule.isScheduledActive
+																? 'Cancel'
+																: 'Arm Timer'}
+														</button>
+													)}
 													<button
 														type="button"
-														onClick={() =>
-															handleToggleInstanceSchedule(inst.id)
-														}
-														className={`px-2.5 py-1 rounded text-xs font-medium ${
-															inst.schedule.isScheduledActive
-																? 'bg-red-600/20 text-red-300'
-																: 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-														}`}
+														onClick={() => handleRunSingleInstance(inst.id)}
+														disabled={inst.status === 'running'}
+														className="px-2.5 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40"
 													>
-														{inst.schedule.isScheduledActive
-															? 'Cancel'
-															: 'Arm Timer'}
+														Run Now
 													</button>
-												)}
-												<button
-													type="button"
-													onClick={() => handleRunSingleInstance(inst.id)}
-													disabled={inst.status === 'running'}
-													className="px-2.5 py-1 rounded text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40"
-												>
-													Run Now
-												</button>
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
 						</div>
 					</div>
 				</div>
 			)}
 
+			{/* ===================================================================== */}
+			{/* PAGE 5: EXPORTS & AUDIT (Downloadable Bundle & Lease Purge Receipts)  */}
+			{/* ===================================================================== */}
 			{activeTab === 'audit' && (
-				<div className="flex-1 min-h-0 overflow-y-auto p-5">
-					<div className="max-w-7xl mx-auto space-y-6">
-						{/* Interactive Export Results Log & Downloadable Workflow Files/Folders Studio */}
+				<div className="flex-1 min-h-0 overflow-y-auto p-6">
+					<div className="max-w-7xl mx-auto space-y-8">
 						<WorkflowExportCenter
 							instances={instances}
 							topology={topology}
@@ -2055,12 +2251,13 @@ export default function Layout() {
 						<div className="flex items-center justify-between border-b border-slate-800 pb-4 pt-2">
 							<div>
 								<h2 className="text-sm font-bold text-white">
-									Ephemeral Credential Lease & Financial/PII Safety Audit Receipts ({auditLog.length})
+									Ephemeral Credential Lease &amp; Financial/PII Safety Audit
+									Receipts ({auditLog.length})
 								</h2>
 								<p className="text-xs text-slate-400 mt-1">
 									Verifiable log confirming every workflow lease is
 									automatically deleted on completion (0ms post-run retention)
-									and tracking all PII & financial redactions.
+									and tracking all PII &amp; financial redactions.
 								</p>
 							</div>
 							{auditLog.length > 0 && (
@@ -2080,9 +2277,11 @@ export default function Layout() {
 									No Completed Lease Purge Receipts Recorded Yet
 								</p>
 								<p className="text-xs text-slate-500 max-w-md mx-auto">
-									You can already browse and download the pre-configured workflow
-									folders and results log above, or run the 4-instance workflow
-									to record live step runtimes and automatic post-run credential
+									You can already browse and download the pre-configured
+									workflow folders (including{' '}
+									<code className="font-mono text-indigo-300">/harness</code>)
+									and results log above, or run the 4-instance workflow to
+									record live step runtimes and automatic post-run credential
 									deletion receipts.
 								</p>
 								<button
@@ -2119,7 +2318,7 @@ export default function Layout() {
 												Purged Timestamp
 											</th>
 											<th className="py-3 px-4 font-medium text-right">
-												Credential & Safety State
+												Credential &amp; Safety State
 											</th>
 										</tr>
 									</thead>
@@ -2171,137 +2370,6 @@ export default function Layout() {
 					</div>
 				</div>
 			)}
-
-			{/* Bottom Master Workflow Prompt & Scheduler Command Bar */}
-			<div className="px-5 py-3 bg-slate-900 border-t border-slate-800 shrink-0">
-				<div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
-					{/* Prompt Input + Sample Selector */}
-					<div className="flex-1 flex flex-col gap-1.5">
-						<div className="flex items-center justify-between text-[11px] text-slate-400 flex-wrap gap-2">
-							<div className="flex items-center gap-2">
-								<span className="font-semibold text-slate-200">
-									Master Multi-Agent Workflow Objective
-								</span>
-								<span aria-hidden="true">·</span>
-								<span>
-									{CmdOrCtrlKey}+Enter to execute across all 4 agents
-								</span>
-							</div>
-							<div className="flex items-center gap-2.5">
-								<span className="text-slate-500">Presets:</span>
-								<button
-									type="button"
-									onClick={() => setSuperprompt(SAMPLE_WORKFLOW_PROMPTS[0])}
-									className="text-indigo-400 hover:text-indigo-300 underline-offset-2 hover:underline"
-								>
-									01. Distributed Rate-Limiter
-								</button>
-								<button
-									type="button"
-									onClick={() => setSuperprompt(SAMPLE_WORKFLOW_PROMPTS[1])}
-									className="text-emerald-400 hover:text-emerald-300 underline-offset-2 hover:underline"
-								>
-									02. Financial & PII Guardrail Test
-								</button>
-								<button
-									type="button"
-									onClick={() => setSuperprompt(SAMPLE_WORKFLOW_PROMPTS[2])}
-									className="text-indigo-400 hover:text-indigo-300 underline-offset-2 hover:underline"
-								>
-									03. Ledger Migration
-								</button>
-							</div>
-						</div>
-
-						<textarea
-							rows={2}
-							value={superprompt}
-							onChange={(e) => setSuperprompt(e.target.value)}
-							onKeyDown={(e) => {
-								if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-									e.preventDefault();
-									executeAllFourWorkflow();
-								}
-							}}
-							placeholder="Enter a workflow objective to execute across all 4 agents (PII and financial records are automatically protected by per-agent guardrails)..."
-							className="w-full px-3 py-2 text-xs font-mono bg-slate-950 border border-slate-800 rounded-md text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none"
-						/>
-					</div>
-
-					{/* Right Action & Master Scheduler Controls */}
-					<div className="flex items-center gap-2.5 shrink-0">
-						{/* Master Scheduler Quick Selector */}
-						<div className="flex flex-col gap-1 bg-slate-950 border border-slate-800 rounded-md p-2 text-xs">
-							<div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-								<ClockIcon className="w-3.5 h-3.5 text-indigo-400" />
-								<span>Workflow Schedule</span>
-								{masterRunsCompleted > 0 && (
-									<span className="font-mono tabular-nums text-slate-500">
-										({masterRunsCompleted} runs)
-									</span>
-								)}
-							</div>
-							<div className="flex items-center gap-1.5">
-								<select
-									value={masterScheduleMode}
-									onChange={(e) => {
-										setMasterScheduleMode(e.target.value as ScheduleMode);
-										setIsMasterScheduled(false);
-									}}
-									className="px-2 py-1 text-xs bg-slate-900 border border-slate-800 rounded text-slate-200"
-								>
-									<option value="immediate">Immediate</option>
-									<option value="delayed">Delayed (+10s)</option>
-									<option value="recurring">Recurring (60s)</option>
-								</select>
-
-								{masterScheduleMode !== 'immediate' && (
-									<button
-										type="button"
-										onClick={handleToggleMasterSchedule}
-										className={`px-2.5 py-1 rounded text-xs font-medium font-mono tabular-nums whitespace-nowrap shrink-0 ${
-											isMasterScheduled
-												? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-												: 'bg-slate-800 text-slate-200 hover:bg-slate-700'
-										}`}
-									>
-										{isMasterScheduled ? `${masterCountdown}s` : 'Arm'}
-									</button>
-								)}
-							</div>
-						</div>
-
-						{/* PromptCritic Optimizer Modal Trigger */}
-						<div className="bg-slate-950 border border-slate-800 rounded-md">
-							<PromptCritic
-								active={false}
-								superprompt={superprompt}
-								setSuperprompt={setSuperprompt}
-							/>
-						</div>
-
-						{/* Primary Execute Button */}
-						<button
-							type="button"
-							onClick={executeAllFourWorkflow}
-							disabled={isGlobalRunning || !superprompt.trim()}
-							className="h-12 px-5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold rounded-md transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
-						>
-							{isGlobalRunning ? (
-								<>
-									<ReloadIcon className="w-4 h-4 animate-spin" />
-									<span>Running Steps...</span>
-								</>
-							) : (
-								<>
-									<PlayIcon className="w-4 h-4" />
-									<span>Run 4-Instance Workflow</span>
-								</>
-							)}
-						</button>
-					</div>
-				</div>
-			</div>
 		</div>
 	);
 }

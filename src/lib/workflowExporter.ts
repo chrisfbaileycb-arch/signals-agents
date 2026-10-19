@@ -269,6 +269,7 @@ export function buildWorkflowResultsLog(params: {
 			`  Lease Binding       : ${inst.leaseId || 'ephemeral-session'} (${inst.leaseStatus.toUpperCase()})`,
 			`  Guardrail Policy    : PII=${inst.guardrails.piiPolicy.toUpperCase()} | Financial=${inst.guardrails.financialPolicy.toUpperCase()} | SanitizeHandoffs=${inst.guardrails.sanitizeHandoffs}`,
 			`  Redactions Applied  : ${inst.totalRedactionsCount}`,
+			`  Harness Config      : ${inst.harness.schemaVersion} (substrate=${inst.harness.substrate}, alwaysOnChars=${inst.harness.validationCensus.alwaysOnChars}/${inst.harness.validationCensus.alwaysOnMax}, skills=${inst.harness.validationCensus.skills}, mcp=${inst.harness.validationCensus.mcpServers.join(',') || 'none'})`,
 			`  System Prompt       : ${inst.customSystemPrompt}`,
 			'  Execution Steps     :',
 		);
@@ -582,10 +583,48 @@ export function buildWorkflowFileBundle(params: {
 		'text/plain;charset=utf-8',
 	);
 
+	// 3B. /harness/ Folder — Canonical harness2.v1 Configuration Manifest
+	if (instances[0]?.harness) {
+		addFile(
+			'harness/harness-configuration-oc.json',
+			'Active harness2.v1 configuration manifest (editorTree, validationCensus, skills, sub-agents, MCP servers)',
+			JSON.stringify(
+				{
+					schemaVersion: instances[0].harness.schemaVersion,
+					exportedAt: generatedAt,
+					substrate: instances[0].harness.substrate,
+					validationCensus: instances[0].harness.validationCensus,
+					editorTree: instances[0].harness.editorTree,
+				},
+				null,
+				2,
+			),
+			'application/json;charset=utf-8',
+		);
+	}
+
 	// 4. /agents/ Folder Hierarchy (1 subfolder per Agent 01–04)
 	for (const inst of instances) {
 		const roleSlug = slugify(inst.agentRole);
 		const agentFolder = `agents/0${inst.id}-${roleSlug}`;
+
+		addFile(
+			`${agentFolder}/harness-configuration.json`,
+			`Agent 0${inst.id} harness2.v1 configuration (${inst.harness.substrate})`,
+			JSON.stringify(
+				{
+					schemaVersion: inst.harness.schemaVersion,
+					exportedAt: inst.harness.exportedAt,
+					substrate: inst.harness.substrate,
+					validationCensus: inst.harness.validationCensus,
+					editorTree: inst.harness.editorTree,
+				},
+				null,
+				2,
+			),
+			'application/json;charset=utf-8',
+			inst.id,
+		);
 
 		const agentOverviewMd = [
 			`# Agent 0${inst.id}: ${inst.name} — ${inst.agentRole}`,
