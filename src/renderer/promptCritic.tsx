@@ -6,6 +6,7 @@ import {
 	DialogTitle,
 } from './components/ui/dialog';
 import { Button } from './components/ui/button';
+import { executeAuditedProviderCall } from 'lib/byokConnector';
 
 export function PromptCritic(props: {
 	active?: boolean;
@@ -40,25 +41,34 @@ export function PromptCritic(props: {
 		setLoading(true);
 		setError(null);
 		try {
-			const res = await fetch('/api/prompt-critic', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ prompt: promptToAnalyze }),
+			const response = await executeAuditedProviderCall({
+				prompt: `Analyze and optimize the following directional multi-agent workflow objective:
+--- Original Objective ---
+${promptToAnalyze}
+--- End Original Objective ---
+
+Output in two parts:
+Part 1: 3 concise bullet points describing structural improvements for sequential 4-agent directional execution and PII/financial guardrail boundaries.
+Part 2: Suggested Improved Prompt: followed by a single refined version of the objective.`,
+				systemPrompt:
+					'You are the Signals Agents Workflow Objective Optimizer. Never output unmasked PII or financial identifiers.',
 			});
-			const data = await res.json();
-			if (data.analysis) {
-				setAnalysis(data.analysis);
-				const suggestionMatch = data.analysis.match(
-					/(?:Suggested Improved Prompt:|Improved version:?)\s*["']?([\s\S]+?)["']?$/i,
-				);
-				if (suggestionMatch && suggestionMatch[1]) {
-					setImprovedPrompt(suggestionMatch[1].trim());
-				} else {
-					setImprovedPrompt(promptToAnalyze);
-				}
+
+			const text = response.text || '';
+			setAnalysis(text);
+			const suggestionMatch = text.match(
+				/(?:Suggested Improved Prompt:|Improved version:?)\s*["']?([\s\S]+?)["']?$/i,
+			);
+			if (suggestionMatch && suggestionMatch[1]) {
+				setImprovedPrompt(suggestionMatch[1].trim());
+			} else {
+				setImprovedPrompt(response.sanitizedPrompt);
 			}
-		} catch {
-			setError('Failed to analyze prompt. Please try again.');
+		} catch (err: any) {
+			setError(
+				err?.message ||
+					'Refused: Connect a personal API key or local model endpoint in the BYOK Connector first.',
+			);
 		} finally {
 			setLoading(false);
 		}
@@ -85,7 +95,7 @@ export function PromptCritic(props: {
 				<DialogContent className="max-w-2xl bg-slate-900 border border-slate-800 text-slate-100">
 					<DialogHeader>
 						<DialogTitle className="text-base font-semibold text-white">
-							Workflow Objective Optimizer
+							Workflow Objective Optimizer (BYOK Audited Gateway)
 						</DialogTitle>
 					</DialogHeader>
 
@@ -100,7 +110,7 @@ export function PromptCritic(props: {
 						</div>
 
 						{error && (
-							<div className="p-2.5 bg-red-950/60 border border-red-800 text-red-200 rounded-md">
+							<div className="p-2.5 bg-red-950/60 border border-red-800 text-red-200 rounded-md font-mono text-[11px]">
 								{error}
 							</div>
 						)}
@@ -108,7 +118,7 @@ export function PromptCritic(props: {
 						{loading ? (
 							<div className="flex flex-col items-center justify-center p-8 space-y-2 text-slate-400">
 								<div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-								<span>Decomposing objective for multi-agent execution...</span>
+								<span>Decomposing objective via BYOK audited gateway...</span>
 							</div>
 						) : analysis ? (
 							<div className="space-y-3">

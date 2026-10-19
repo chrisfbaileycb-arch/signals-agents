@@ -230,13 +230,7 @@ export function buildWorkflowResultsLog(params: {
 		`Generated Timestamp : ${nowIso}`,
 		`Workflow Archetype  : ${archetype.title} [${archetype.id}]`,
 		`Bundle Folder Name  : ${archetype.rootFolderName}/`,
-		`Handoff Topology    : ${topology.toUpperCase()} (${
-			topology === 'directional'
-				? 'Sequential 01 -> 02 -> 03 -> 04'
-				: topology === 'diamond'
-				? 'Diamond Fan-Out/Fan-In 01 -> [02 || 03] -> 04'
-				: 'Parallel Simultaneous 01 || 02 || 03 || 04'
-		})`,
+		`Handoff Topology    : ${topology.toUpperCase()} (Sequential 01 -> 02 -> 03 -> 04)`,
 		`BYOK Routing Mode   : ${
 			keyRoutingScope === 'shared_four'
 				? 'Shared 4-Agent Multiplexed Session Lease'
@@ -446,6 +440,9 @@ export function buildWorkflowFileBundle(params: {
 		`- \`/agents/\` — Dedicated sub-folders for each of the 4 Agent Renderances (\`01\` through \`04\`) containing their unique system prompts, step-by-step transcripts, and synthesized deliverables.`,
 		`- \`/deliverables/\` — Workflow-specific deployable artifacts, configurations, schemas, and verification matrices tailored to **${archetype.title}**.`,
 		`- \`/mind-map/\` — Mind-Work-Done visual graph state (\`mind-work-done-state.json\`) and Mermaid directional handoff diagram (\`workflow-topology.mmd\`).`,
+		'',
+		`## Product Identity & MIT License Attribution`,
+		`**Signals Agents** (Copyright (c) 2026 Christopher F. Bailey / Signal F Holdings LLC) is an original, standalone identifiable software product distributed under the MIT License.`,
 	].join('\n');
 
 	addFile(
@@ -453,6 +450,36 @@ export function buildWorkflowFileBundle(params: {
 		'Executive workflow bundle overview, topology manifest, and directory guide',
 		readmeContent,
 		'text/markdown;charset=utf-8',
+	);
+
+	addFile(
+		'LICENSE',
+		'MIT License with full copyright attribution',
+		[
+			'MIT License',
+			'',
+			'Copyright (c) 2026 Christopher F. Bailey / Signal F Holdings LLC',
+			'Copyright (c) 2015-present Electron React Boilerplate',
+			'',
+			'Permission is hereby granted, free of charge, to any person obtaining a copy',
+			'of this software and associated documentation files (the "Software"), to deal',
+			'in the Software without restriction, including without limitation the rights',
+			'to use, copy, modify, merge, publish, distribute, sublicense, and/or sell',
+			'copies of the Software, and to permit persons to whom the Software is',
+			'furnished to do so, subject to the following conditions:',
+			'',
+			'The above copyright notice and this permission notice shall be included in all',
+			'copies or substantial portions of the Software.',
+			'',
+			'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR',
+			'IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,',
+			'FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE',
+			'AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER',
+			'LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,',
+			'OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE',
+			'SOFTWARE.',
+		].join('\n'),
+		'text/plain;charset=utf-8',
 	);
 
 	// 2. /logs/ Folder Files
@@ -529,35 +556,13 @@ export function buildWorkflowFileBundle(params: {
 		),
 		'  PURGE["Ephemeral BYOK Key Lease Purge (0ms)"]',
 	];
-	if (topology === 'directional') {
-		mermaidLines.push(
-			'  CORE --> A1',
-			'  A1 -->|Sanitized Handoff| A2',
-			'  A2 -->|Sanitized Handoff| A3',
-			'  A3 -->|Sanitized Handoff| A4',
-			'  A4 --> PURGE',
-		);
-	} else if (topology === 'diamond') {
-		mermaidLines.push(
-			'  CORE --> A1',
-			'  A1 -->|Fan-Out| A2',
-			'  A1 -->|Fan-Out| A3',
-			'  A2 -->|Fan-In| A4',
-			'  A3 -->|Fan-In| A4',
-			'  A4 --> PURGE',
-		);
-	} else {
-		mermaidLines.push(
-			'  CORE --> A1',
-			'  CORE --> A2',
-			'  CORE --> A3',
-			'  CORE --> A4',
-			'  A1 --> PURGE',
-			'  A2 --> PURGE',
-			'  A3 --> PURGE',
-			'  A4 --> PURGE',
-		);
-	}
+	mermaidLines.push(
+		'  CORE --> A1',
+		'  A1 -->|Sanitized Handoff| A2',
+		'  A2 -->|Sanitized Handoff| A3',
+		'  A3 -->|Sanitized Handoff| A4',
+		'  A4 --> PURGE',
+	);
 
 	addFile(
 		'mind-map/workflow-topology.mmd',

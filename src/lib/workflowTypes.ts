@@ -1,12 +1,19 @@
-export type GeminiModelId =
-	| 'gemini-3.8-flash'
-	| 'gemini-3.1-flash-lite'
-	| 'gemini-flash-latest';
+import { redactPiiFromText } from './byokConnector';
 
-export type WorkflowTopology =
-	| 'parallel' // All 4 instances run simultaneously
-	| 'directional' // Sequential chain: Instance 1 -> 2 -> 3 -> 4
-	| 'diamond'; // Fan-out/Fan-in: Instance 1 -> [2 & 3 in parallel] -> 4
+export type GeminiModelId =
+	| 'gemini-2.5-flash'
+	| 'gemini-2.5-pro'
+	| 'gemini-2.0-flash'
+	| 'gpt-4o-mini'
+	| 'gpt-4o'
+	| 'claude-3-5-haiku-latest'
+	| 'claude-3-7-sonnet-latest'
+	| 'openai/gpt-4o-mini'
+	| 'meta-llama/Llama-3.3-70B-Instruct-Turbo'
+	| 'sonar'
+	| 'local-model';
+
+export type WorkflowTopology = 'directional'; // Sequential chain: Instance 1 -> 2 -> 3 -> 4
 
 export type ScheduleMode = 'immediate' | 'delayed' | 'recurring';
 
@@ -164,22 +171,34 @@ export const AVAILABLE_MODELS: {
 	description: string;
 }[] = [
 	{
-		id: 'gemini-3.8-flash',
-		label: 'Gemini 3.8 Flash',
-		tier: 'Balanced Reasoning',
-		description: 'High-efficiency multi-step reasoning and structured agent execution',
+		id: 'gemini-2.5-flash',
+		label: 'Gemini 2.5 Flash',
+		tier: 'Google Gemini BYOK',
+		description: 'Fast, balanced reasoning for directional workflow steps',
 	},
 	{
-		id: 'gemini-3.1-flash-lite',
-		label: 'Gemini 3.1 Flash Lite',
-		tier: 'Low-Latency Speed',
-		description: 'Rapid task decomposition, triage, and high-throughput step execution',
+		id: 'gemini-2.5-pro',
+		label: 'Gemini 2.5 Pro',
+		tier: 'Google Gemini BYOK',
+		description: 'Deep architectural & compliance analysis',
 	},
 	{
-		id: 'gemini-flash-latest',
-		label: 'Gemini Flash Latest',
-		tier: 'Dynamic Synthesis',
-		description: 'Adaptive synthesis, verification, and cross-instance aggregation',
+		id: 'gpt-4o-mini',
+		label: 'OpenAI GPT-4o Mini',
+		tier: 'OpenAI BYOK',
+		description: 'High-speed directional workflow step execution',
+	},
+	{
+		id: 'claude-3-5-haiku-latest',
+		label: 'Anthropic Claude 3.5 Haiku',
+		tier: 'Anthropic BYOK',
+		description: 'Fast analytical and compliance step execution',
+	},
+	{
+		id: 'local-model',
+		label: 'Local Model (LM Studio / Ollama)',
+		tier: 'Local Endpoint (No Key Required)',
+		description: 'Executes against your local HTTP model server',
 	},
 ];
 
@@ -219,114 +238,24 @@ export const AGENT_ROLE_PRESETS: {
 	},
 ];
 
-// Client & Server helper to inspect and redact/block PII and Financial data
+// Client helper to inspect and redact/block PII, embedded API keys, and Financial data
 export function evaluateSafetyGuardrails(
 	input: string,
 	config: SafetyGuardrailConfig,
 ): GuardrailScanResult {
-	if (!input) {
-		return {
-			sanitizedText: '',
-			piiCount: 0,
-			financialCount: 0,
-			detectedTypes: [],
-			blocked: false,
-		};
-	}
+	const policy =
+		config.piiPolicy === 'block' || config.financialPolicy === 'block'
+			? 'block'
+			: 'mask';
 
-	let working = input;
-	let piiCount = 0;
-	let financialCount = 0;
-	const detectedSet = new Set<string>();
-
-	// 1. Financial patterns: Credit Card PAN (13-19 digits in groups), IBAN, Routing/Account numbers
-	const creditCardRegex = /\b(?:\d{4}[-\s]?){3}\d{4}\b/g;
-	const acctNumberRegex = /\b(?:acct|account|routing|iban)[:#\s-]*([A-Z0-9-]{6,22})\b/gi;
-
-	const cardMatches = working.match(creditCardRegex);
-	if (cardMatches && cardMatches.length > 0) {
-		financialCount += cardMatches.length;
-		detectedSet.add('Payment Card PAN');
-		if (config.financialPolicy === 'mask') {
-			working = working.replace(creditCardRegex, '[REDACTED_FINANCIAL_CARD]');
-		}
-	}
-
-	const acctMatches = working.match(acctNumberRegex);
-	if (acctMatches && acctMatches.length > 0) {
-		financialCount += acctMatches.length;
-		detectedSet.add('Bank/Account Identifier');
-		if (config.financialPolicy === 'mask') {
-			working = working.replace(
-				acctNumberRegex,
-				'[REDACTED_FINANCIAL_ACCOUNT]',
-			);
-		}
-	}
-
-	// 2. PII patterns: SSN (XXX-XX-XXXX), Email, Phone Number
-	const ssnRegex = /\b\d{3}-\d{2}-\d{4}\b/g;
-	const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
-	const phoneRegex = /\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g;
-
-	const ssnMatches = working.match(ssnRegex);
-	if (ssnMatches && ssnMatches.length > 0) {
-		piiCount += ssnMatches.length;
-		detectedSet.add('Social Security Number (SSN)');
-		if (config.piiPolicy === 'mask') {
-			working = working.replace(ssnRegex, '[REDACTED_PII_SSN]');
-		}
-	}
-
-	const emailMatches = working.match(emailRegex);
-	if (emailMatches && emailMatches.length > 0) {
-		piiCount += emailMatches.length;
-		detectedSet.add('Personal Email');
-		if (config.piiPolicy === 'mask') {
-			working = working.replace(emailRegex, '[REDACTED_PII_EMAIL]');
-		}
-	}
-
-	const phoneMatches = working.match(phoneRegex);
-	if (phoneMatches && phoneMatches.length > 0) {
-		piiCount += phoneMatches.length;
-		detectedSet.add('Phone Number');
-		if (config.piiPolicy === 'mask') {
-			working = working.replace(phoneRegex, '[REDACTED_PII_PHONE]');
-		}
-	}
-
-	const detectedTypes = Array.from(detectedSet);
-
-	// Check if policy requires strict blocking
-	if (config.financialPolicy === 'block' && financialCount > 0) {
-		return {
-			sanitizedText: working,
-			piiCount,
-			financialCount,
-			detectedTypes,
-			blocked: true,
-			blockReason: `Strict Financial Guardrail blocked execution: detected ${financialCount} financial identifier(s) (${detectedTypes.join(', ')}).`,
-		};
-	}
-
-	if (config.piiPolicy === 'block' && piiCount > 0) {
-		return {
-			sanitizedText: working,
-			piiCount,
-			financialCount,
-			detectedTypes,
-			blocked: true,
-			blockReason: `Strict PII Guardrail blocked execution: detected ${piiCount} personal identifier(s) (${detectedTypes.join(', ')}).`,
-		};
-	}
-
+	const scan = redactPiiFromText(input, { policy });
 	return {
-		sanitizedText: working,
-		piiCount,
-		financialCount,
-		detectedTypes,
-		blocked: false,
+		sanitizedText: scan.sanitizedText,
+		piiCount: scan.piiCount + scan.apiKeyCount,
+		financialCount: scan.financialCount,
+		detectedTypes: scan.detectedCategories,
+		blocked: scan.blocked,
+		blockReason: scan.blockReason,
 	};
 }
 
@@ -450,7 +379,7 @@ export const INITIAL_FOUR_INSTANCES: WorkflowInstance[] = [
 		name: 'Renderance 01',
 		agentRole: AGENT_ROLE_PRESETS[0].role,
 		customSystemPrompt: AGENT_ROLE_PRESETS[0].defaultSystemPrompt,
-		model: 'gemini-3.1-flash-lite',
+		model: 'gemini-2.5-flash',
 		enabled: true,
 		viewMode: 'steps',
 		status: 'idle',
@@ -487,7 +416,7 @@ export const INITIAL_FOUR_INSTANCES: WorkflowInstance[] = [
 		name: 'Renderance 02',
 		agentRole: AGENT_ROLE_PRESETS[1].role,
 		customSystemPrompt: AGENT_ROLE_PRESETS[1].defaultSystemPrompt,
-		model: 'gemini-3.8-flash',
+		model: 'gemini-2.5-flash',
 		enabled: true,
 		viewMode: 'steps',
 		status: 'idle',
@@ -524,7 +453,7 @@ export const INITIAL_FOUR_INSTANCES: WorkflowInstance[] = [
 		name: 'Renderance 03',
 		agentRole: AGENT_ROLE_PRESETS[2].role,
 		customSystemPrompt: AGENT_ROLE_PRESETS[2].defaultSystemPrompt,
-		model: 'gemini-flash-latest',
+		model: 'gemini-2.5-flash',
 		enabled: true,
 		viewMode: 'steps',
 		status: 'idle',
@@ -561,7 +490,7 @@ export const INITIAL_FOUR_INSTANCES: WorkflowInstance[] = [
 		name: 'Renderance 04',
 		agentRole: AGENT_ROLE_PRESETS[3].role,
 		customSystemPrompt: AGENT_ROLE_PRESETS[3].defaultSystemPrompt,
-		model: 'gemini-3.8-flash',
+		model: 'gemini-2.5-flash',
 		enabled: true,
 		viewMode: 'steps',
 		status: 'idle',

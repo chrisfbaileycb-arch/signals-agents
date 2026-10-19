@@ -158,23 +158,11 @@ export default function Pane({
 				)
 			: 0;
 
-	// Compute upstream / downstream handoff label based on topology
+	// Compute upstream / downstream handoff label for directional sequence
 	const getHandoffTopologyLabel = () => {
-		if (topology === 'parallel') {
-			return 'Parallel Execution (Independent)';
-		}
-		if (topology === 'directional') {
-			if (instance.id === 1) return 'Entry Node → Hands off to 02';
-			if (instance.id === 4) return 'Receives from 03 → Final Output';
-			return `Receives 0${instance.id - 1} → Hands off to 0${instance.id + 1}`;
-		}
-		if (topology === 'diamond') {
-			if (instance.id === 1) return 'Root Node → Fan-Out to 02 & 03';
-			if (instance.id === 2 || instance.id === 3)
-				return 'Receives 01 → Fan-In to 04';
-			return 'Receives 02 & 03 → Final Synthesis';
-		}
-		return 'Independent';
+		if (instance.id === 1) return 'Entry Node → Hands off to 02';
+		if (instance.id === 4) return 'Receives from 03 → Final Output';
+		return `Receives 0${instance.id - 1} → Hands off to 0${instance.id + 1}`;
 	};
 
 	return (

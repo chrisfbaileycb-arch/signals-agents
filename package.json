@@ -1,24 +1,27 @@
 {
-	"name": "godmode",
-	"productName": "GodMode",
-	"version": "1.0.0-beta.9",
-	"author": "smol-ai",
-	"description": "Simultaneously chat with ChatGPT, Claude, Bing, Bard, Llama2, et al in a full chat browser, NO API",
+	"name": "signals-agents",
+	"productName": "Signals Agents",
+	"version": "1.0.0",
+	"author": "Chris Bailey",
+	"description": "Directional multi-agent workflow studio. Bring your own API key or a local model.",
 	"type": "module",
 	"main": "server.ts",
 	"scripts": {
 		"dev": "tsx server.ts",
 		"build": "vite build",
-		"start": "tsx server.ts",
-		"lint": "eslint . --ext .js,.jsx,.ts,.tsx"
+		"start": "node server.ts",
+		"lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+		"test": "jest"
 	},
 	"config": {
 		"forge": "./forge.config.js"
 	},
 	"keywords": [
-		"chatgpt",
-		"openai",
-		"mac"
+		"signals-agents",
+		"multi-agent",
+		"workflow-studio",
+		"mind-work-done",
+		"guardrails"
 	],
 	"license": "MIT",
 	"dependencies": {
@@ -52,7 +55,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/smol-ai/GodMode"
+		"url": "https://github.com/chrisfbaileycb-arch/signals-agents"
 	},
 	"devDependencies": {
 		"@electron/notarize": "^2.1.0",
@@ -126,11 +129,11 @@
 		"webpack-merge": "^5.9.0"
 	},
 	"build": {
-		"productName": "GodMode",
-		"appId": "org.smol.GodMode",
+		"productName": "Signals Agents",
+		"appId": "com.signalfholdings.signalsagents",
 		"asar": true,
 		"asarUnpack": "**\\*.{node,dll}",
-		"copyright": "Copyright 2023 smol.ai/godmode",
+		"copyright": "Copyright (c) 2026 Christopher F. Bailey / Signal F Holdings LLC. Refactored from MIT-licensed upstream components Copyright (c) 2023 smol-ai / GodMode contributors & Copyright (c) 2015-present Electron React Boilerplate.",
 		"files": [
 			"dist",
 			"node_modules",
@@ -200,8 +203,8 @@
 		],
 		"publish": {
 			"provider": "github",
-			"owner": "smol-ai",
-			"repo": "GodMode"
+			"owner": "signal-f-holdings",
+			"repo": "signals-agents"
 		}
 	}
 }

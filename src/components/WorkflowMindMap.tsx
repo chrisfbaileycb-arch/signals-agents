@@ -11,9 +11,7 @@ import {
 	CompanionType,
 	computeTopologyCoordinates,
 	GraphState,
-	MIND_APPROVAL_KEY,
 	MIND_BLUEPRINT_PRESETS,
-	MIND_COMPANION_KEY,
 	MindAuditLogItem,
 	MindNode,
 	NODE_COLORS,
@@ -312,18 +310,9 @@ export default function WorkflowMindMap({
 		),
 	);
 
-	// Companion Gate state from mind-work-done
-	const [companion, setCompanion] = useState<CompanionType>(() => {
-		const saved = localStorage.getItem(MIND_COMPANION_KEY);
-		if (saved === 'robot' || saved === 'stuffed-animal' || saved === 'grandma') {
-			return saved;
-		}
-		return 'robot';
-	});
-
-	const [ownerApproved, setOwnerApproved] = useState<boolean>(() => {
-		return localStorage.getItem(MIND_APPROVAL_KEY) === 'yes';
-	});
+	// Companion Gate state from mind-work-done (session memory only)
+	const [companion, setCompanion] = useState<CompanionType>('robot');
+	const [ownerApproved, setOwnerApproved] = useState<boolean>(false);
 
 	// Filter & Search state
 	const [colorFilter, setColorFilter] = useState<'all' | NodeColorType>('all');
@@ -344,7 +333,7 @@ export default function WorkflowMindMap({
 		null,
 	);
 	const [intakeText, setIntakeText] = useState<string>(
-		`Urgent: Verify PCI-DSS card PAN masking before downstream handoff\nMilestone: Complete 4-agent directional step pipeline\nBrainstorm: Add parallel latency verification step`,
+		`Urgent: Verify PCI-DSS card PAN masking before downstream handoff\nMilestone: Complete 4-agent directional step pipeline\nBrainstorm: Add sequential latency verification step`,
 	);
 	const [blueprintText, setBlueprintText] = useState<string>(
 		MIND_BLUEPRINT_PRESETS[0].content,
@@ -909,14 +898,12 @@ export default function WorkflowMindMap({
 	// Companion Gate approval toggle
 	const handleSelectCompanion = (next: CompanionType) => {
 		setCompanion(next);
-		localStorage.setItem(MIND_COMPANION_KEY, next);
 		appendMindLog(`companion set to ${next}`);
 	};
 
 	const handleToggleApproval = (next?: boolean) => {
 		const target = typeof next === 'boolean' ? next : !ownerApproved;
 		setOwnerApproved(target);
-		localStorage.setItem(MIND_APPROVAL_KEY, target ? 'yes' : 'no');
 		if (target) setPendingDeleteNodeId(null);
 		appendMindLog(
 			target
@@ -1097,7 +1084,7 @@ export default function WorkflowMindMap({
 
 				{/* Stage Coordination Actions */}
 				<div className="flex items-center gap-2 flex-wrap">
-					{/* Topology Coordinator Switcher */}
+					{/* Directional Sequence Mode Indicator */}
 					<div
 						className={`flex items-center gap-1 p-0.5 border rounded-lg ${themeCfg.cardClass}`}
 					>
@@ -1105,52 +1092,10 @@ export default function WorkflowMindMap({
 							type="button"
 							onClick={() => onChangeTopology('directional')}
 							disabled={isGlobalRunning}
-							className={`px-2 py-1 rounded text-[11px] transition-colors cursor-pointer ${
-								topology === 'directional'
-									? 'bg-emerald-500/20 border border-emerald-500/40 font-bold'
-									: `${themeCfg.mutedTextClass} hover:opacity-100`
-							}`}
-							style={
-								topology === 'directional'
-									? { color: themeCfg.nodePalette.emerald.badgeText }
-									: undefined
-							}
+							className="px-2 py-1 rounded text-[11px] transition-colors cursor-pointer bg-emerald-500/20 border border-emerald-500/40 font-bold"
+							style={{ color: themeCfg.nodePalette.emerald.badgeText }}
 						>
 							Directional (01→02→03→04)
-						</button>
-						<button
-							type="button"
-							onClick={() => onChangeTopology('diamond')}
-							disabled={isGlobalRunning}
-							className={`px-2 py-1 rounded text-[11px] transition-colors cursor-pointer ${
-								topology === 'diamond'
-									? 'bg-emerald-500/20 border border-emerald-500/40 font-bold'
-									: `${themeCfg.mutedTextClass} hover:opacity-100`
-							}`}
-							style={
-								topology === 'diamond'
-									? { color: themeCfg.nodePalette.emerald.badgeText }
-									: undefined
-							}
-						>
-							Diamond (01→[02,03]→04)
-						</button>
-						<button
-							type="button"
-							onClick={() => onChangeTopology('parallel')}
-							disabled={isGlobalRunning}
-							className={`px-2 py-1 rounded text-[11px] transition-colors cursor-pointer ${
-								topology === 'parallel'
-									? 'bg-emerald-500/20 border border-emerald-500/40 font-bold'
-									: `${themeCfg.mutedTextClass} hover:opacity-100`
-							}`}
-							style={
-								topology === 'parallel'
-									? { color: themeCfg.nodePalette.emerald.badgeText }
-									: undefined
-							}
-						>
-							Parallel Radial (4x)
 						</button>
 					</div>
 

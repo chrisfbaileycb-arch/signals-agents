@@ -72,9 +72,9 @@ export interface MindAuditLogItem {
 	message: string;
 }
 
-export const MIND_STORAGE_KEY = 'godmode-mind-work-done-v1';
-export const MIND_APPROVAL_KEY = 'godmode-mind-approved';
-export const MIND_COMPANION_KEY = 'godmode-mind-companion';
+export const MIND_STORAGE_KEY = 'signals-agents-mind-work-done-v1';
+export const MIND_APPROVAL_KEY = 'signals-agents-mind-approved';
+export const MIND_COMPANION_KEY = 'signals-agents-mind-companion';
 
 export const NODE_RADII: Record<NodeColorType, number> = {
 	emerald: 17,
@@ -157,90 +157,37 @@ export const COMPANION_META: Record<
 /**
  * Computes default deterministic coordinates for the Central Workflow Hub,
  * the 4 Agent Renderance nodes, their 3 execution steps each, and the Ephemeral Key/Guardrail node
- * based on the selected topology ('directional' | 'diamond' | 'parallel').
+ * for the directional workflow sequence.
  */
 export function computeTopologyCoordinates(
-	topology: WorkflowTopology,
+	_topology: WorkflowTopology,
 ): Record<string, { x: number; y: number }> {
 	const coords: Record<string, { x: number; y: number }> = {};
 
-	if (topology === 'directional') {
-		// Left-to-right sequential handoff chain: Core -> Agent 01 -> Agent 02 -> Agent 03 -> Agent 04 -> Lease Purge
-		coords['wf-core'] = { x: -460, y: 0 };
-		const agentXs = [-250, -40, 170, 380];
-		const agentYs = [-20, 20, -20, 20];
+	// Left-to-right sequential handoff chain: Core -> Agent 01 -> Agent 02 -> Agent 03 -> Agent 04 -> Lease Purge
+	coords['wf-core'] = { x: -460, y: 0 };
+	const agentXs = [-250, -40, 170, 380];
+	const agentYs = [-20, 20, -20, 20];
 
-		for (let i = 0; i < 4; i++) {
-			const agentId = i + 1;
-			const ax = agentXs[i];
-			const ay = agentYs[i];
-			coords[`agent-${agentId}`] = { x: ax, y: ay };
+	for (let i = 0; i < 4; i++) {
+		const agentId = i + 1;
+		const ax = agentXs[i];
+		const ay = agentYs[i];
+		coords[`agent-${agentId}`] = { x: ax, y: ay };
 
-			// 3 execution steps arranged in a clean vertical/fan arc above or below the agent
-			const direction = i % 2 === 0 ? -1 : 1;
-			for (let s = 0; s < 3; s++) {
-				const stepNum = s + 1;
-				const offsetX = (s - 1) * 76;
-				const offsetY = direction * (115 + (s === 1 ? 26 : 0));
-				coords[`step-${agentId}-${stepNum}`] = {
-					x: Math.round(ax + offsetX),
-					y: Math.round(ay + offsetY),
-				};
-			}
-		}
-		coords['lease-guardrail'] = { x: 545, y: 0 };
-	} else if (topology === 'diamond') {
-		// Diamond Fan-Out / Fan-In: Core -> Agent 01 -> [Agent 02 (top) & Agent 03 (bottom)] -> Agent 04 -> Lease Purge
-		coords['wf-core'] = { x: -430, y: 0 };
-		coords['agent-1'] = { x: -230, y: 0 };
-		coords['agent-2'] = { x: 0, y: -150 };
-		coords['agent-3'] = { x: 0, y: 150 };
-		coords['agent-4'] = { x: 240, y: 0 };
-		coords['lease-guardrail'] = { x: 440, y: 0 };
-
-		// Agent 1 steps (fan left-top/bottom)
-		coords['step-1-1'] = { x: -310, y: -115 };
-		coords['step-1-2'] = { x: -230, y: -140 };
-		coords['step-1-3'] = { x: -150, y: -115 };
-
-		// Agent 2 steps (top arc)
-		coords['step-2-1'] = { x: -95, y: -255 };
-		coords['step-2-2'] = { x: 0, y: -275 };
-		coords['step-2-3'] = { x: 95, y: -255 };
-
-		// Agent 3 steps (bottom arc)
-		coords['step-3-1'] = { x: -95, y: 255 };
-		coords['step-3-2'] = { x: 0, y: 275 };
-		coords['step-3-3'] = { x: 95, y: 255 };
-
-		// Agent 4 steps (right arc)
-		coords['step-4-1'] = { x: 185, y: -120 };
-		coords['step-4-2'] = { x: 265, y: -145 };
-		coords['step-4-3'] = { x: 335, y: -115 };
-	} else {
-		// Parallel Radial Mind-Map: Central Core at (0,0), 4 Agents at diagonal quadrants, steps radiating outward
-		coords['wf-core'] = { x: 0, y: 0 };
-		const angles = [-Math.PI * 0.75, -Math.PI * 0.25, Math.PI * 0.25, Math.PI * 0.75];
-		const agentRadius = 185;
-		const stepRadius = 325;
-
-		for (let i = 0; i < 4; i++) {
-			const agentId = i + 1;
-			const baseAngle = angles[i];
-			coords[`agent-${agentId}`] = {
-				x: Math.round(Math.cos(baseAngle) * agentRadius),
-				y: Math.round(Math.sin(baseAngle) * agentRadius),
+		// 3 execution steps arranged in a clean vertical/fan arc above or below the agent
+		const direction = i % 2 === 0 ? -1 : 1;
+		for (let s = 0; s < 3; s++) {
+			const stepNum = s + 1;
+			const offsetX = (s - 1) * 76;
+			const offsetY = direction * (115 + (s === 1 ? 26 : 0));
+			coords[`step-${agentId}-${stepNum}`] = {
+				x: Math.round(ax + offsetX),
+				y: Math.round(ay + offsetY),
 			};
-			for (let s = 0; s < 3; s++) {
-				const stepAngle = baseAngle + (s - 1) * 0.28;
-				coords[`step-${agentId}-${s + 1}`] = {
-					x: Math.round(Math.cos(stepAngle) * stepRadius),
-					y: Math.round(Math.sin(stepAngle) * stepRadius),
-				};
-			}
 		}
-		coords['lease-guardrail'] = { x: 0, y: -235 };
 	}
+	coords['lease-guardrail'] = { x: 545, y: 0 };
 
 	return coords;
 }
@@ -520,87 +467,6 @@ export function syncWorkflowToMindMapGraph(
 			isActiveFlow: instances[3]?.status === 'running',
 			isCompletedFlow: instances[3]?.status === 'completed',
 		});
-	} else if (topology === 'diamond') {
-		workflowLinks.push({
-			id: 'link-core-agent-1',
-			from: 'wf-core',
-			to: 'agent-1',
-			label: 'intake',
-			isActiveFlow: instances[0]?.status === 'running',
-			isCompletedFlow: instances[0]?.status === 'completed',
-		});
-		workflowLinks.push({
-			id: 'link-fanout-1-2',
-			from: 'agent-1',
-			to: 'agent-2',
-			label: 'fan-out 01→02',
-			isActiveFlow:
-				instances[0]?.status === 'completed' && instances[1]?.status === 'running',
-			isCompletedFlow:
-				instances[0]?.status === 'completed' &&
-				instances[1]?.status === 'completed',
-		});
-		workflowLinks.push({
-			id: 'link-fanout-1-3',
-			from: 'agent-1',
-			to: 'agent-3',
-			label: 'fan-out 01→03',
-			isActiveFlow:
-				instances[0]?.status === 'completed' && instances[2]?.status === 'running',
-			isCompletedFlow:
-				instances[0]?.status === 'completed' &&
-				instances[2]?.status === 'completed',
-		});
-		workflowLinks.push({
-			id: 'link-fanin-2-4',
-			from: 'agent-2',
-			to: 'agent-4',
-			label: 'fan-in 02→04',
-			isActiveFlow:
-				instances[1]?.status === 'completed' && instances[3]?.status === 'running',
-			isCompletedFlow:
-				instances[1]?.status === 'completed' &&
-				instances[3]?.status === 'completed',
-		});
-		workflowLinks.push({
-			id: 'link-fanin-3-4',
-			from: 'agent-3',
-			to: 'agent-4',
-			label: 'fan-in 03→04',
-			isActiveFlow:
-				instances[2]?.status === 'completed' && instances[3]?.status === 'running',
-			isCompletedFlow:
-				instances[2]?.status === 'completed' &&
-				instances[3]?.status === 'completed',
-		});
-		workflowLinks.push({
-			id: 'link-agent-4-lease',
-			from: 'agent-4',
-			to: 'lease-guardrail',
-			label: 'purge key',
-			isActiveFlow: instances[3]?.status === 'running',
-			isCompletedFlow: instances[3]?.status === 'completed',
-		});
-	} else {
-		// Parallel broadcast from wf-core to all 4 agents + lease node
-		instances.forEach((inst) => {
-			workflowLinks.push({
-				id: `link-parallel-core-${inst.id}`,
-				from: 'wf-core',
-				to: `agent-${inst.id}`,
-				label: `parallel 0${inst.id}`,
-				isActiveFlow: inst.status === 'running',
-				isCompletedFlow: inst.status === 'completed',
-			});
-		});
-		workflowLinks.push({
-			id: 'link-parallel-lease',
-			from: 'wf-core',
-			to: 'lease-guardrail',
-			label: 'auto-purge',
-			isActiveFlow: Boolean(activeGlobalLeaseId),
-			isCompletedFlow: allCompleted,
-		});
 	}
 
 	// Preserve any custom manual / intake / blueprint nodes & links created by the user on the canvas
@@ -616,7 +482,6 @@ export function syncWorkflowToMindMapGraph(
 					!l.id.startsWith('link-core-') &&
 					!l.id.startsWith('link-handoff-') &&
 					!l.id.startsWith('link-fan') &&
-					!l.id.startsWith('link-parallel-') &&
 					!l.id.startsWith('link-agent-'),
 		  )
 		: [];

@@ -18,6 +18,21 @@ import {
 	WorkflowTopology,
 } from 'lib/workflowTypes';
 import {
+	ByokProviderId,
+	clearAllByokCredentials,
+	DEFAULT_PROVIDER_ENDPOINTS,
+	DEFAULT_PROVIDER_MODELS,
+	executeAuditedProviderCall,
+	getActiveProviderId,
+	getByokStatus,
+	hasActiveByokCredential,
+	setActiveProviderId,
+	setByokApiKey,
+	setByokLocalEndpoint,
+	subscribeByokConnector,
+} from 'lib/byokConnector';
+import { PROVIDER_REGISTRY } from 'providers';
+import {
 	buildWorkflowFileBundle,
 	createZipBlob,
 	downloadSingleVirtualFile,
@@ -37,8 +52,6 @@ import {
 	ReloadIcon,
 	ResetIcon,
 } from '@radix-ui/react-icons';
-
-export type paneInfo = { webviewId: string; shortName: string };
 
 const SAMPLE_WORKFLOW_PROMPTS = [
 	'Design a fault-tolerant distributed rate-limiting service handling 100k RPS with sub-5ms p99 latency, including data structures, failure fallback, and verification tests.',
@@ -73,38 +86,43 @@ export default function Layout() {
 		redactionsApplied: number;
 	} | null>(null);
 
-	// Environment Theme state: light, dark, pastel, or earthy tones (Default choice: earthy)
-	const [environmentTheme, setEnvironmentTheme] = useState<EnvironmentTheme>(
-		() => {
-			const saved = localStorage.getItem('signals_agents_env_theme');
-			if (
-				saved === 'light' ||
-				saved === 'dark' ||
-				saved === 'pastel' ||
-				saved === 'earthy'
-			) {
-				return saved;
-			}
-			return 'earthy';
-		},
-	);
+	// Environment Theme state in session memory (default: earthy)
+	const [environmentTheme, setEnvironmentTheme] =
+		useState<EnvironmentTheme>('earthy');
 
 	useEffect(() => {
-		localStorage.setItem('signals_agents_env_theme', environmentTheme);
 		document.body.setAttribute('data-theme', environmentTheme);
 	}, [environmentTheme]);
 
-	// Front-End Facing BYOK & Ephemeral Lease Connector State
+	// Front-End Facing BYOK & Ephemeral Session Memory Connector State
 	const [showByokConnector, setShowByokConnector] = useState<boolean>(true);
 	const [keyRoutingScope, setKeyRoutingScope] =
 		useState<KeyRoutingScope>('shared_four');
-	const [isByokConnected, setIsByokConnected] = useState<boolean>(true);
-	const [byokPreFlightLeaseId, setByokPreFlightLeaseId] = useState<
-		string | null
-	>(null);
-	const [byokStatusMessage, setByokStatusMessage] = useState<string>(
-		'Connected · 1 Ephemeral Key Multiplexed Across 4 Agent Renderances (Auto-Deletes on Completion)',
+	const [selectedProviderId, setSelectedProviderId] =
+		useState<ByokProviderId>('gemini');
+	const [apiKeyInput, setApiKeyInput] = useState<string>('');
+	const [localEndpointInput, setLocalEndpointInput] = useState<string>(
+		DEFAULT_PROVIDER_ENDPOINTS.local,
 	);
+	const [localModelInput, setLocalModelInput] = useState<string>(
+		DEFAULT_PROVIDER_MODELS.local,
+	);
+	const [byokErrorBanner, setByokErrorBanner] = useState<string | null>(null);
+	const [, setConnectorTick] = useState<number>(0);
+
+	useEffect(() => {
+		return subscribeByokConnector(() => {
+			setConnectorTick((t) => t + 1);
+		});
+	}, []);
+
+	const activeByokStatus = getByokStatus(selectedProviderId);
+	const isByokConnected = hasActiveByokCredential();
+	const byokStatusMessage = activeByokStatus.configured
+		? activeByokStatus.mode === 'local_endpoint'
+			? `Local Endpoint Active in Session RAM (${activeByokStatus.baseUrl} · ${activeByokStatus.defaultModel}) · Cleared on Reload`
+			: `${activeByokStatus.providerId.toUpperCase()} Key Active in Session RAM (${activeByokStatus.maskedKeyPreview}) · Never Persisted · Cleared on Reload`
+		: 'No Credential in Session RAM · Financial Guardrail Active (Will Refuse Execution Until Personal API Key or Local Endpoint is Connected)';
 
 	// Master Workflow Scheduler state
 	const [masterScheduleMode, setMasterScheduleMode] =
@@ -151,10 +169,10 @@ export default function Layout() {
 			);
 		} else {
 			const mixedModels: GeminiModelId[] = [
-				'gemini-3.1-flash-lite',
-				'gemini-3.8-flash',
-				'gemini-flash-latest',
-				'gemini-3.8-flash',
+				'gemini-2.5-flash',
+				'gemini-2.5-pro',
+				'gpt-4o-mini',
+				'claude-3-5-haiku-latest',
 			];
 			setInstances((prev) =>
 				prev.map((inst, idx) => ({
@@ -180,26 +198,8 @@ export default function Layout() {
 		);
 	};
 
-	// Provision ephemeral lease on backend
-	const provisionLease = async (instanceIds: number[]): Promise<string> => {
-		try {
-			const res = await fetch('/api/workflow/lease', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					workflowId: `wf_${Date.now()}`,
-					instanceIds,
-				}),
-			});
-			const data = await res.json();
-			return data.leaseId || `lease_${Date.now().toString(16)}`;
-		} catch {
-			return `lease_${Date.now().toString(16)}`;
-		}
-	};
-
-	// Immediately purge ephemeral lease on backend upon workflow completion
-	const purgeLease = async (
+	// Record ephemeral session lease audit entry locally in memory
+	const recordAuditReceipt = (
 		leaseId: string,
 		scopeLabel: string,
 		usedTopology: WorkflowTopology,
@@ -210,21 +210,7 @@ export default function Layout() {
 		redactionsApplied: number,
 		status: 'PURGED_ON_COMPLETION' | 'BLOCKED_BY_GUARDRAIL' = 'PURGED_ON_COMPLETION',
 	) => {
-		let purgedAt = new Date().toISOString();
-		try {
-			const res = await fetch('/api/workflow/purge-lease', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ leaseId }),
-			});
-			const data = await res.json();
-			if (data.purgedAt) {
-				purgedAt = data.purgedAt;
-			}
-		} catch (e) {
-			console.debug('Lease purge fallback', e);
-		}
-
+		const purgedAt = new Date().toISOString();
 		setLastPurgeReceipt({
 			leaseId,
 			purgedAt,
@@ -250,36 +236,42 @@ export default function Layout() {
 		return purgedAt;
 	};
 
-	// Front-End BYOK Connector Handlers
-	const handleConnectByokSession = async () => {
+	// Front-End BYOK Ephemeral Session Memory Handlers
+	const handleConnectByokSession = () => {
+		setByokErrorBanner(null);
 		try {
-			const win = window as any;
-			if (win.aistudio && typeof win.aistudio.openSelectKey === 'function') {
-				await win.aistudio.openSelectKey();
+			if (selectedProviderId === 'local') {
+				const status = setByokLocalEndpoint(
+					localEndpointInput,
+					localModelInput,
+				);
+				setActiveGlobalLeaseId(status.sessionLeaseId);
+			} else {
+				const status = setByokApiKey(selectedProviderId, apiKeyInput);
+				setApiKeyInput('');
+				setActiveGlobalLeaseId(status.sessionLeaseId);
 			}
-		} catch (e) {
-			console.debug('AI Studio key selector fallback', e);
+		} catch (err: any) {
+			setByokErrorBanner(
+				err?.message || 'Failed to store credential in session memory.',
+			);
 		}
-
-		const leaseId = await provisionLease([1, 2, 3, 4]);
-		setByokPreFlightLeaseId(leaseId);
-		setIsByokConnected(true);
-		setByokStatusMessage(
-			keyRoutingScope === 'shared_four'
-				? `BYOK Session Lease Connected (${leaseId}) · Synced across Renderances 01–04 · Auto-Purges on Completion`
-				: `BYOK Scoped Leases Armed (${leaseId}) · Independent Per-Agent Renderance Leases Ready`,
-		);
 	};
 
-	const handlePurgeByokNow = async () => {
+	const handlePurgeByokNow = () => {
+		const currentStatus = getByokStatus( getActiveProviderId() );
 		const targetLease =
+			currentStatus.sessionLeaseId ||
 			activeGlobalLeaseId ||
-			byokPreFlightLeaseId ||
 			`lease_manual_${Date.now().toString(16)}`;
 		const nowIso = new Date().toISOString();
-		await purgeLease(
+		clearAllByokCredentials();
+		setApiKeyInput('');
+		setByokErrorBanner(null);
+		setActiveGlobalLeaseId(null);
+		recordAuditReceipt(
 			targetLease,
-			'Manual Front-End BYOK Connector Purge',
+			'Manual Front-End BYOK Session Memory Purge',
 			topology,
 			instancesRef.current.map((i) => i.model),
 			nowIso,
@@ -288,8 +280,6 @@ export default function Layout() {
 			0,
 			'PURGED_ON_COMPLETION',
 		);
-		setByokPreFlightLeaseId(null);
-		setActiveGlobalLeaseId(null);
 		setInstances((prev) =>
 			prev.map((inst) => ({
 				...inst,
@@ -297,9 +287,6 @@ export default function Layout() {
 				leaseStatus: 'purged',
 				leasePurgedAt: nowIso,
 			})),
-		);
-		setByokStatusMessage(
-			'Ephemeral BYOK Lease Purged (0ms retention) · Will auto-provision fresh lease on next workflow run',
 		);
 	};
 
@@ -470,69 +457,52 @@ export default function Layout() {
 					instancesRef.current.find((inst) => inst.id === instanceId) ||
 					target;
 
-				const [res] = await Promise.all([
-					fetch('/api/workflow/execute-step', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({
-							leaseId: sharedLeaseId,
-							instanceId: latestInst.id,
-							instanceName: latestInst.name,
-							model: latestInst.model,
-							agentRole: latestInst.agentRole,
-							customSystemPrompt: latestInst.customSystemPrompt,
-							guardrails: latestInst.guardrails,
-							stepNumber: i + 1,
-							totalSteps: stepsSnapshot.length,
-							stepTitle: step.title,
-							stepInstruction: step.instruction,
-							prompt: promptText,
-							upstreamContext: upstreamContextText,
-							previousStepsOutput: accumulatedStepsOutput,
-						}),
-					}),
-					// Ensure readable real-time progress bar animation across the 4 sub-tasks
-					new Promise((resolve) => setTimeout(resolve, 520)),
-				]);
+				const guardrailPolicy =
+					latestInst.guardrails.piiPolicy === 'block' ||
+					latestInst.guardrails.financialPolicy === 'block'
+						? 'block'
+						: 'mask';
+
+				const stepPrompt = [
+					`Primary Workflow Objective:\n${promptText}`,
+					accumulatedStepsOutput
+						? `\nCompleted Earlier Steps in ${latestInst.name}:\n${accumulatedStepsOutput}`
+						: '',
+					`\nExecute Step ${i + 1} of ${stepsSnapshot.length} ("${step.title}"): ${step.instruction}`,
+				]
+					.filter(Boolean)
+					.join('\n');
+
+				const systemDirective = [
+					latestInst.customSystemPrompt,
+					`You are executing Step ${i + 1}/${stepsSnapshot.length} (${step.title}) as ${latestInst.agentRole}.`,
+					'Respect all PII and financial safety guardrails. Never output raw SSNs, payment card PANs, or unmasked credentials.',
+				].join('\n\n');
+
+				const auditedRes = await executeAuditedProviderCall({
+					model: latestInst.model,
+					prompt: stepPrompt,
+					systemPrompt: systemDirective,
+					upstreamContext: upstreamContextText,
+					guardrailPolicy,
+				});
 
 				clearInterval(progressInterval);
 
-				const data = await res.json();
-				if (!res.ok || data.error) {
-					const isBlocked = Boolean(data.blockedByGuardrail);
-					updateInstance(instanceId, (prev) => ({
-						...prev,
-						status: isBlocked ? 'blocked' : 'error',
-						activeStepIndex: null,
-						handoffState: 'idle',
-						steps: prev.steps.map((s) =>
-							s.id === step.id
-								? {
-										...s,
-										status: isBlocked ? 'blocked' : 'error',
-										error: data.error || 'Step execution failed',
-									}
-								: s,
-						),
-					}));
-					return {
-						deliverable: accumulatedStepsOutput,
-						durationMs: instanceTotalMs,
-						stepsDone,
-						redactionsCount: instanceRedactions,
-						blocked: isBlocked,
-					};
-				}
-
 				const stepDuration =
-					Number(data.durationMs) || Math.max(250, Date.now() - stepStartMs);
-				const stepRedactions = Number(data.redactionsCount) || 0;
+					auditedRes.durationMs || Math.max(50, Date.now() - stepStartMs);
+				const stepRedactions = auditedRes.redactionsApplied;
 				instanceTotalMs += stepDuration;
 				stepsDone += 1;
 				instanceRedactions += stepRedactions;
 
-				const stepOutputText = data.executionOutput || '';
+				const stepOutputText = auditedRes.text || '';
 				accumulatedStepsOutput += `\n[${step.title}]:\n${stepOutputText}\n`;
+
+				const guardrailSummary =
+					stepRedactions > 0
+						? `Guardrails Redacted ${stepRedactions} item(s) (${auditedRes.detectedCategories.join(', ')})`
+						: 'Guardrails Verified: 0 PII / Financial exposures';
 
 				updateInstance(instanceId, (prev) => ({
 					...prev,
@@ -553,27 +523,34 @@ export default function Layout() {
 										status: 'done',
 									})),
 									durationMs: stepDuration,
-									reasoningSummary: data.reasoningSummary,
+									reasoningSummary: `Executed ${step.title} via ${auditedRes.providerId.toUpperCase()} (${auditedRes.modelUsed})`,
 									executionOutput: stepOutputText,
-									verificationCheck: data.verificationCheck,
-									guardrailSummary: data.guardrailSummary,
-									completedAt: data.completedAt,
+									verificationCheck: guardrailSummary,
+									guardrailSummary,
+									completedAt: auditedRes.completedAt,
 								}
 							: s,
 					),
 				}));
 			} catch (err: any) {
 				clearInterval(progressInterval);
+				const isGuardrailRefusal =
+					err?.name === 'FinancialGuardrailError' ||
+					err?.name === 'PiiGuardrailBlockedError';
+				if (isGuardrailRefusal) {
+					setByokErrorBanner(err?.message);
+					setShowByokConnector(true);
+				}
 				updateInstance(instanceId, (prev) => ({
 					...prev,
-					status: 'error',
+					status: isGuardrailRefusal ? 'blocked' : 'error',
 					activeStepIndex: null,
 					handoffState: 'idle',
 					steps: prev.steps.map((s) =>
 						s.id === step.id
 							? {
 									...s,
-									status: 'error',
+									status: isGuardrailRefusal ? 'blocked' : 'error',
 									error: err?.message || 'Execution error',
 								}
 							: s,
@@ -584,7 +561,7 @@ export default function Layout() {
 					durationMs: instanceTotalMs,
 					stepsDone,
 					redactionsCount: instanceRedactions,
-					blocked: false,
+					blocked: isGuardrailRefusal,
 				};
 			}
 		}
@@ -606,7 +583,7 @@ export default function Layout() {
 		};
 	};
 
-	// Run a single instance standalone with its own ephemeral lease that deletes on completion
+	// Run a single instance standalone through the audited BYOK gateway
 	const handleRunSingleInstance = async (instanceId: number) => {
 		const promptText = superpromptRef.current.trim();
 		if (!promptText) return;
@@ -616,35 +593,19 @@ export default function Layout() {
 
 		setShowLiveMindMap(true);
 		const provisionedAt = new Date().toISOString();
-		const leaseId = await provisionLease([instanceId]);
+		const status = getByokStatus();
+		const leaseId =
+			status.sessionLeaseId || `lease_unconfigured_${Date.now().toString(16)}`;
 
-		// Gather any existing upstream deliverable if directional or diamond
 		let upstreamText = '';
 		let handoffFrom: string | null = null;
-		if (topology === 'directional' && instanceId > 1) {
+		if (instanceId > 1) {
 			const prevInst = instancesRef.current.find(
 				(i) => i.id === instanceId - 1,
 			);
 			if (prevInst?.lastDeliverable) {
 				upstreamText = prevInst.lastDeliverable;
 				handoffFrom = `${prevInst.name} (${prevInst.agentRole})`;
-			}
-		} else if (topology === 'diamond') {
-			if (instanceId === 2 || instanceId === 3) {
-				const rootInst = instancesRef.current.find((i) => i.id === 1);
-				if (rootInst?.lastDeliverable) {
-					upstreamText = rootInst.lastDeliverable;
-					handoffFrom = `${rootInst.name}`;
-				}
-			} else if (instanceId === 4) {
-				const i2 = instancesRef.current.find((i) => i.id === 2);
-				const i3 = instancesRef.current.find((i) => i.id === 3);
-				upstreamText = [i2?.lastDeliverable, i3?.lastDeliverable]
-					.filter(Boolean)
-					.join('\n\n---\n\n');
-				if (upstreamText) {
-					handoffFrom = 'Renderances 02 & 03 (Fan-In)';
-				}
 			}
 		}
 
@@ -657,10 +618,10 @@ export default function Layout() {
 				handoffFrom,
 			);
 
-			const purgedAt = await purgeLease(
+			const purgedAt = recordAuditReceipt(
 				leaseId,
 				`${inst.name} (${inst.agentRole})`,
-				topology,
+				'directional',
 				[inst.model],
 				provisionedAt,
 				result.durationMs,
@@ -680,8 +641,7 @@ export default function Layout() {
 		}
 	};
 
-	// Execute all 4 instances according to the selected Directional / Parallel / Diamond topology
-	// Sharing a single unified ephemeral session lease that auto-deletes the moment the workflow finishes
+	// Execute all 4 instances sequentially (Directional: 01 -> 02 -> 03 -> 04), one step at a time
 	const executeAllFourWorkflow = async () => {
 		const promptText = superpromptRef.current.trim();
 		if (!promptText || isGlobalRunningRef.current) return;
@@ -693,7 +653,9 @@ export default function Layout() {
 		const allIds = instancesRef.current.map((i) => i.id);
 		const modelsUsed = instancesRef.current.map((i) => i.model);
 
-		const sharedLeaseId = await provisionLease(allIds);
+		const status = getByokStatus();
+		const sharedLeaseId =
+			status.sessionLeaseId || `lease_unconfigured_${Date.now().toString(16)}`;
 		setActiveGlobalLeaseId(sharedLeaseId);
 
 		let totalStepsCompleted = 0;
@@ -701,118 +663,37 @@ export default function Layout() {
 		let anyBlocked = false;
 
 		try {
-			if (topology === 'parallel') {
-				// All 4 instances execute simultaneously in parallel using the shared ephemeral lease
-				const results = await Promise.all(
-					allIds.map((id) =>
-						executeInstancePipeline(
-							id,
-							sharedLeaseId,
-							promptText,
-							'',
-							'Parallel Broadcast',
-						),
-					),
-				);
-				totalStepsCompleted = results.reduce((acc, r) => acc + r.stepsDone, 0);
-				totalRedactions = results.reduce(
-					(acc, r) => acc + r.redactionsCount,
-					0,
-				);
-				anyBlocked = results.some((r) => r.blocked);
-			} else if (topology === 'directional') {
-				// Sequential directional workflow with step-to-step agent handoffs: 01 -> 02 -> 03 -> 04
-				let upstreamDeliverable = '';
-				let upstreamAgentLabel: string | null = null;
-				for (const id of allIds) {
-					const currentInst = instancesRef.current.find((i) => i.id === id);
-					const res = await executeInstancePipeline(
-						id,
-						sharedLeaseId,
-						promptText,
-						upstreamDeliverable,
-						upstreamAgentLabel,
-					);
-					totalStepsCompleted += res.stepsDone;
-					totalRedactions += res.redactionsCount;
-					if (res.blocked) {
-						anyBlocked = true;
-						break;
-					}
-					if (res.deliverable) {
-						upstreamDeliverable = res.deliverable;
-						upstreamAgentLabel = currentInst
-							? `${currentInst.name} (${currentInst.agentRole})`
-							: `Renderance 0${id}`;
-					}
-				}
-			} else if (topology === 'diamond') {
-				// Diamond: Instance 01 runs -> hands off to 02 & 03 in parallel -> both hand off to 04
-				const res1 = await executeInstancePipeline(
-					1,
+			// Strictly sequenced directional workflow: 01 -> 02 -> 03 -> 04
+			let upstreamDeliverable = '';
+			let upstreamAgentLabel: string | null = null;
+			for (const id of allIds) {
+				const currentInst = instancesRef.current.find((i) => i.id === id);
+				const res = await executeInstancePipeline(
+					id,
 					sharedLeaseId,
 					promptText,
-					'',
-					null,
+					upstreamDeliverable,
+					upstreamAgentLabel,
 				);
-				totalStepsCompleted += res1.stepsDone;
-				totalRedactions += res1.redactionsCount;
-
-				if (res1.blocked) {
+				totalStepsCompleted += res.stepsDone;
+				totalRedactions += res.redactionsCount;
+				if (res.blocked) {
 					anyBlocked = true;
-				} else {
-					const [res2, res3] = await Promise.all([
-						executeInstancePipeline(
-							2,
-							sharedLeaseId,
-							promptText,
-							res1.deliverable,
-							'Renderance 01 (Fan-Out)',
-						),
-						executeInstancePipeline(
-							3,
-							sharedLeaseId,
-							promptText,
-							res1.deliverable,
-							'Renderance 01 (Fan-Out)',
-						),
-					]);
-					totalStepsCompleted += res2.stepsDone + res3.stepsDone;
-					totalRedactions += res2.redactionsCount + res3.redactionsCount;
-
-					if (res2.blocked || res3.blocked) {
-						anyBlocked = true;
-					} else {
-						const combinedUpstream = [
-							`From Renderance 02:\n${res2.deliverable}`,
-							`From Renderance 03:\n${res3.deliverable}`,
-						].join('\n\n===\n\n');
-
-						const res4 = await executeInstancePipeline(
-							4,
-							sharedLeaseId,
-							promptText,
-							combinedUpstream,
-							'Renderances 02 & 03 (Fan-In)',
-						);
-						totalStepsCompleted += res4.stepsDone;
-						totalRedactions += res4.redactionsCount;
-						if (res4.blocked) anyBlocked = true;
-					}
+					break;
+				}
+				if (res.deliverable) {
+					upstreamDeliverable = res.deliverable;
+					upstreamAgentLabel = currentInst
+						? `${currentInst.name} (${currentInst.agentRole})`
+						: `Renderance 0${id}`;
 				}
 			}
 		} finally {
 			const totalWorkflowDurationMs = Date.now() - workflowStartMs;
-			const purgedAt = await purgeLease(
+			const purgedAt = recordAuditReceipt(
 				sharedLeaseId,
-				`4-Instance ${
-					topology === 'directional'
-						? 'Directional Chain (1→2→3→4)'
-						: topology === 'diamond'
-						? 'Diamond Topology (1→[2,3]→4)'
-						: 'Parallel Ensemble (4x)'
-				}`,
-				topology,
+				'4-Instance Directional Chain (1→2→3→4)',
+				'directional',
 				modelsUsed,
 				provisionedAt,
 				totalWorkflowDurationMs,
@@ -821,7 +702,6 @@ export default function Layout() {
 				anyBlocked ? 'BLOCKED_BY_GUARDRAIL' : 'PURGED_ON_COMPLETION',
 			);
 
-			// Immediately zero out and mark lease purged across all 4 instances
 			setInstances((prev) =>
 				prev.map((inst) => ({
 					...inst,
@@ -837,13 +717,15 @@ export default function Layout() {
 		}
 	};
 
-	// Direct chat handler on an individual instance with automatic ephemeral lease purge
+	// Direct chat handler routed through the single audited BYOK gateway
 	const handleSendDirectChat = async (instanceId: number, message: string) => {
 		const inst = instancesRef.current.find((i) => i.id === instanceId);
 		if (!inst) return;
 
 		const provisionedAt = new Date().toISOString();
-		const leaseId = await provisionLease([instanceId]);
+		const status = getByokStatus();
+		const leaseId =
+			status.sessionLeaseId || `lease_unconfigured_${Date.now().toString(16)}`;
 
 		const userTurnId = `user-${Date.now()}`;
 		updateInstance(instanceId, (prev) => ({
@@ -867,37 +749,37 @@ export default function Layout() {
 		}));
 
 		try {
-			const res = await fetch('/api/chat', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					providerId: `instance_${instanceId}`,
-					providerName: `${inst.name} (${inst.agentRole})`,
-					model: inst.model,
-					customSystemPrompt: inst.customSystemPrompt,
-					guardrails: inst.guardrails,
-					prompt: message,
-				}),
-			});
-			const data = await res.json();
-			const durationMs = Number(data.durationMs) || 200;
-			const redactions = Number(data.redactionsCount) || 0;
+			const guardrailPolicy =
+				inst.guardrails.piiPolicy === 'block' ||
+				inst.guardrails.financialPolicy === 'block'
+					? 'block'
+					: 'mask';
 
-			const purgedAt = await purgeLease(
+			const auditedRes = await executeAuditedProviderCall({
+				model: inst.model,
+				prompt: message,
+				systemPrompt: inst.customSystemPrompt,
+				guardrailPolicy,
+			});
+
+			const durationMs = auditedRes.durationMs;
+			const redactions = auditedRes.redactionsApplied;
+
+			const purgedAt = recordAuditReceipt(
 				leaseId,
 				`${inst.name} Direct Chat`,
-				topology,
+				'directional',
 				[inst.model],
 				provisionedAt,
 				durationMs,
 				1,
 				redactions,
-				res.status === 422 ? 'BLOCKED_BY_GUARDRAIL' : 'PURGED_ON_COMPLETION',
+				'PURGED_ON_COMPLETION',
 			);
 
 			updateInstance(instanceId, (prev) => ({
 				...prev,
-				status: res.status === 422 ? 'blocked' : 'completed',
+				status: 'completed',
 				leaseId: null,
 				leaseStatus: 'purged',
 				leasePurgedAt: purgedAt,
@@ -908,26 +790,43 @@ export default function Layout() {
 					{
 						id: `assistant-${Date.now()}`,
 						role: 'assistant',
-						content: data.text || data.error || 'No response received.',
+						content: auditedRes.text || 'No response received.',
 						timestamp: new Date().toLocaleTimeString([], {
 							hour: '2-digit',
 							minute: '2-digit',
 							second: '2-digit',
 						}),
 						durationMs,
-						modelUsed: inst.model,
+						modelUsed: auditedRes.modelUsed,
 						guardrailNote:
 							redactions > 0
-								? `Guardrails masked ${redactions} sensitive PII/Financial item(s) · Ephemeral lease auto-deleted`
-								: 'Guardrails verified · Ephemeral lease auto-deleted',
+								? `Guardrails masked ${redactions} sensitive PII/Financial item(s) · Session memory audited`
+								: 'Guardrails verified · Session memory audited',
 					},
 				],
 			}));
 		} catch (err: any) {
-			const purgedAt = new Date().toISOString();
+			const isGuardrailRefusal =
+				err?.name === 'FinancialGuardrailError' ||
+				err?.name === 'PiiGuardrailBlockedError';
+			if (isGuardrailRefusal) {
+				setByokErrorBanner(err?.message);
+				setShowByokConnector(true);
+			}
+			const purgedAt = recordAuditReceipt(
+				leaseId,
+				`${inst.name} Direct Chat`,
+				'directional',
+				[inst.model],
+				provisionedAt,
+				0,
+				0,
+				0,
+				'BLOCKED_BY_GUARDRAIL',
+			);
 			updateInstance(instanceId, (prev) => ({
 				...prev,
-				status: 'error',
+				status: isGuardrailRefusal ? 'blocked' : 'error',
 				leaseId: null,
 				leaseStatus: 'purged',
 				leasePurgedAt: purgedAt,
@@ -936,7 +835,7 @@ export default function Layout() {
 					{
 						id: `err-${Date.now()}`,
 						role: 'assistant',
-						content: `Error: ${err?.message || 'Request failed'}`,
+						content: err?.message || 'Request failed',
 						timestamp: new Date().toLocaleTimeString(),
 					},
 				],
@@ -1246,47 +1145,19 @@ export default function Layout() {
 
 			{/* Secondary Workspace Orchestration Bar: Topology, Models, Guardrails, BYOK Connector & Environment Toggle */}
 			<div className="px-5 py-2 bg-slate-900/80 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0 text-xs">
-				{/* Left: Directional Workflow Mode Selector */}
+				{/* Left: Directional Workflow Mode Indicator */}
 				<div className="flex items-center gap-2.5 flex-wrap">
 					<span className="text-slate-400 font-medium whitespace-nowrap">
-						Handoff Topology:
+						Execution Mode:
 					</span>
 					<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
 						<button
 							type="button"
 							onClick={() => setTopology('directional')}
 							disabled={isGlobalRunning}
-							className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-								topology === 'directional'
-									? 'bg-indigo-600 text-white'
-									: 'text-slate-400 hover:text-slate-200'
-							}`}
+							className="px-2.5 py-1 rounded text-xs font-medium bg-indigo-600 text-white whitespace-nowrap shrink-0"
 						>
-							Directional Steps (1 → 2 → 3 → 4)
-						</button>
-						<button
-							type="button"
-							onClick={() => setTopology('parallel')}
-							disabled={isGlobalRunning}
-							className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-								topology === 'parallel'
-									? 'bg-indigo-600 text-white'
-									: 'text-slate-400 hover:text-slate-200'
-							}`}
-						>
-							Parallel (4x Simultaneous)
-						</button>
-						<button
-							type="button"
-							onClick={() => setTopology('diamond')}
-							disabled={isGlobalRunning}
-							className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-								topology === 'diamond'
-									? 'bg-indigo-600 text-white'
-									: 'text-slate-400 hover:text-slate-200'
-							}`}
-						>
-							Diamond (1 → [2,3] → 4)
+							Sequenced Directional Workflow (01 → 02 → 03 → 04)
 						</button>
 					</div>
 				</div>
@@ -1300,29 +1171,27 @@ export default function Layout() {
 						<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
 							<button
 								type="button"
-								onClick={() => applyModelPreset('same', 'gemini-3.8-flash')}
+								onClick={() => applyModelPreset('same', 'gemini-2.5-flash')}
 								disabled={isGlobalRunning}
 								className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-									allSameModel === 'gemini-3.8-flash'
+									allSameModel === 'gemini-2.5-flash'
 										? 'bg-slate-800 text-white'
 										: 'text-slate-400 hover:text-slate-200'
 								}`}
 							>
-								4x Same (3.8 Flash)
+								4x Same (Gemini 2.5 Flash)
 							</button>
 							<button
 								type="button"
-								onClick={() =>
-									applyModelPreset('same', 'gemini-3.1-flash-lite')
-								}
+								onClick={() => applyModelPreset('same', 'gpt-4o-mini')}
 								disabled={isGlobalRunning}
 								className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-									allSameModel === 'gemini-3.1-flash-lite'
+									allSameModel === 'gpt-4o-mini'
 										? 'bg-slate-800 text-white'
 										: 'text-slate-400 hover:text-slate-200'
 								}`}
 							>
-								4x Same (Flash Lite)
+								4x Same (GPT-4o Mini)
 							</button>
 							<button
 								type="button"
@@ -1334,7 +1203,7 @@ export default function Layout() {
 										: 'text-slate-400 hover:text-slate-200'
 								}`}
 							>
-								4x Different Models
+								4x Multi-Provider Models
 							</button>
 						</div>
 					</div>
@@ -1505,12 +1374,7 @@ export default function Layout() {
 									<div className="flex items-center gap-1 p-0.5 bg-slate-950 border border-slate-800 rounded-md">
 										<button
 											type="button"
-											onClick={() => {
-												setKeyRoutingScope('shared_four');
-												setByokStatusMessage(
-													'1 Connected Key Multiplexed Across All 4 Renderances (Same or Mixed Models) · Auto-Deletes on Completion',
-												);
-											}}
+											onClick={() => setKeyRoutingScope('shared_four')}
 											className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
 												keyRoutingScope === 'shared_four'
 													? 'bg-indigo-600 text-white'
@@ -1521,12 +1385,7 @@ export default function Layout() {
 										</button>
 										<button
 											type="button"
-											onClick={() => {
-												setKeyRoutingScope('per_instance');
-												setByokStatusMessage(
-													'Per-Renderance Scoped Ephemeral Leases Active (01–04) · Auto-Deletes on Completion',
-												);
-											}}
+											onClick={() => setKeyRoutingScope('per_instance')}
 											className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
 												keyRoutingScope === 'per_instance'
 													? 'bg-indigo-600 text-white'
@@ -1539,23 +1398,87 @@ export default function Layout() {
 
 									<button
 										type="button"
-										onClick={handleConnectByokSession}
-										disabled={isGlobalRunning}
-										className="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium text-[11px] transition-colors whitespace-nowrap"
-									>
-										Connect / Sync Session Key Lease
-									</button>
-
-									<button
-										type="button"
 										onClick={handlePurgeByokNow}
 										className="px-2.5 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-emerald-400 font-mono text-[11px] transition-colors whitespace-nowrap"
-										title="Immediately purge active or pre-flight session lease (0ms post-run retention)"
+										title="Immediately purge all credentials from page-session memory"
 									>
-										Purge Key Lease Now
+										Purge Session Memory Now
 									</button>
 								</div>
 							</div>
+
+							{/* Interactive Ephemeral Credential & Local Endpoint Form (Page Session Memory ONLY) */}
+							<div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 pt-1">
+								<select
+									aria-label="Select Provider"
+									value={selectedProviderId}
+									onChange={(e) => {
+										const next = e.target.value as ByokProviderId;
+										setSelectedProviderId(next);
+										setActiveProviderId(next);
+										setByokErrorBanner(null);
+									}}
+									className="px-2.5 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs text-slate-100 font-medium shrink-0"
+								>
+									{PROVIDER_REGISTRY.map((prov) => (
+										<option key={prov.providerId} value={prov.providerId}>
+											{prov.fullName}
+											{prov.isConfigured() ? ' (Connected in RAM)' : ''}
+										</option>
+									))}
+								</select>
+
+								{selectedProviderId === 'local' ? (
+									<>
+										<input
+											type="url"
+											value={localEndpointInput}
+											onChange={(e) => setLocalEndpointInput(e.target.value)}
+											placeholder="Local endpoint URL (e.g. http://localhost:1234/v1 or http://localhost:11434/v1)"
+											className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+										/>
+										<input
+											type="text"
+											value={localModelInput}
+											onChange={(e) => setLocalModelInput(e.target.value)}
+											placeholder="Local model name (e.g. llama3.2)"
+											className="w-48 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+										/>
+									</>
+								) : (
+									<input
+										type="password"
+										value={apiKeyInput}
+										onChange={(e) => setApiKeyInput(e.target.value)}
+										placeholder={`Paste personal ${selectedProviderId.toUpperCase()} API key (stored in page-session RAM only — never persisted)`}
+										className="flex-1 px-3 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+									/>
+								)}
+
+								<button
+									type="button"
+									onClick={handleConnectByokSession}
+									disabled={isGlobalRunning}
+									className="px-3.5 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-xs transition-colors whitespace-nowrap shrink-0"
+								>
+									{selectedProviderId === 'local'
+										? 'Connect Local Endpoint in RAM'
+										: 'Connect Key in Session RAM'}
+								</button>
+							</div>
+
+							{byokErrorBanner && (
+								<div className="p-2.5 rounded bg-red-950/60 border border-red-700/80 text-red-200 font-mono text-[11px] flex items-center justify-between gap-2">
+									<span>{byokErrorBanner}</span>
+									<button
+										type="button"
+										onClick={() => setByokErrorBanner(null)}
+										className="text-red-300 hover:text-white underline text-[10px] shrink-0"
+									>
+										Dismiss
+									</button>
+								</div>
+							)}
 
 							{/* 4-Renderance Key Binding Matrix */}
 							<div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 pt-1">
@@ -1613,11 +1536,7 @@ export default function Layout() {
 								Live Agent Workflow & Handoff Pipeline:
 							</span>
 							<span className="text-slate-400">
-								{topology === 'directional'
-									? 'Sequential Step Handoffs (01 → 02 → 03 → 04)'
-									: topology === 'diamond'
-									? 'Diamond Fan-Out / Fan-In (01 → [02 ∥ 03] → 04)'
-									: 'Parallel Independent Execution (01 ∥ 02 ∥ 03 ∥ 04)'}
+								Sequential Step Handoffs (01 → 02 → 03 → 04)
 							</span>
 						</div>
 
@@ -1687,13 +1606,7 @@ export default function Layout() {
 
 										{idx < instances.length - 1 && (
 											<span className="text-slate-600 font-mono text-xs shrink-0 px-0.5">
-												{topology === 'parallel' ? (
-													'∥'
-												) : topology === 'diamond' && idx === 1 ? (
-													'∥'
-												) : (
-													<ArrowRightIcon className="w-3.5 h-3.5 text-slate-500" />
-												)}
+												<ArrowRightIcon className="w-3.5 h-3.5 text-slate-500" />
 											</span>
 										)}
 									</React.Fragment>
@@ -1934,32 +1847,14 @@ export default function Layout() {
 											· Fin {inst.guardrails.financialPolicy.toUpperCase()}
 										</div>
 										<div>
-											{topology === 'directional' ? (
-												idx < 3 ? (
-													<span className="text-indigo-300">
-														Handoff Target → Renderance 0{inst.id + 1}
-													</span>
-												) : (
-													<span className="text-emerald-400">
-														Terminal Synthesis Node → Triggers Key Purge
-													</span>
-												)
-											) : topology === 'diamond' ? (
-												inst.id === 1 ? (
-													<span className="text-indigo-300">
-														Fan-Out → Renderances 02 & 03
-													</span>
-												) : inst.id === 2 || inst.id === 3 ? (
-													<span className="text-indigo-300">
-														Fan-In → Renderance 04
-													</span>
-												) : (
-													<span className="text-emerald-400">
-														Terminal Aggregator → Triggers Key Purge
-													</span>
-												)
+											{idx < 3 ? (
+												<span className="text-indigo-300">
+													Handoff Target → Renderance 0{inst.id + 1}
+												</span>
 											) : (
-												<span>Parallel Broadcast → Triggers Key Purge</span>
+												<span className="text-emerald-400">
+													Terminal Synthesis Node → Triggers Key Purge
+												</span>
 											)}
 										</div>
 									</div>
