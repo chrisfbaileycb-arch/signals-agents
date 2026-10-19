@@ -86,6 +86,16 @@ export interface GuardrailScanResult {
 	blockReason?: string;
 }
 
+export interface StepEphemeralNote {
+	id: string;
+	author: string;
+	text: string;
+	createdAt: string;
+	redactionsApplied: number;
+	detectedCategories: string[];
+	includeInStepPrompt: boolean;
+}
+
 export interface AgentExecutionStep {
 	id: string;
 	stepNumber: number;
@@ -103,6 +113,7 @@ export interface AgentExecutionStep {
 	completedAt?: string;
 	error?: string;
 	guardrailSummary?: string;
+	notes?: StepEphemeralNote[];
 }
 
 export interface InstanceScheduleConfig {
@@ -259,6 +270,35 @@ export function evaluateSafetyGuardrails(
 	};
 }
 
+/**
+ * Creates an ephemeral collaborative step note in page-session memory.
+ * Automatically scrubs PII, embedded API keys, and financial identifiers before storing.
+ */
+export function createStepEphemeralNote(params: {
+	author?: string;
+	text: string;
+	includeInStepPrompt?: boolean;
+}): StepEphemeralNote {
+	const rawAuthor = (params.author || 'Operator').trim() || 'Operator';
+	const authorScan = redactPiiFromText(rawAuthor, { policy: 'mask' });
+	const textScan = redactPiiFromText(params.text.trim(), { policy: 'mask' });
+
+	return {
+		id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+		author: authorScan.sanitizedText,
+		text: textScan.sanitizedText,
+		createdAt: new Date().toISOString(),
+		redactionsApplied: authorScan.redactedCount + textScan.redactedCount,
+		detectedCategories: Array.from(
+			new Set([
+				...authorScan.detectedCategories,
+				...textScan.detectedCategories,
+			]),
+		),
+		includeInStepPrompt: params.includeInStepPrompt ?? true,
+	};
+}
+
 export function createDefaultStepSubTasks(stepId: string): StepSubTask[] {
 	return [
 		{
@@ -369,6 +409,7 @@ export function createDefaultSteps(roleIndex: number): AgentExecutionStep[] {
 			elapsedMs: 0,
 			currentPhaseLabel: 'Ready for execution',
 			subTasks: createDefaultStepSubTasks(stepId),
+			notes: [],
 		};
 	});
 }

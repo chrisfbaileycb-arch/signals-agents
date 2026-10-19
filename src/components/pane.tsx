@@ -4,6 +4,7 @@ import {
 	AGENT_ROLE_PRESETS,
 	AVAILABLE_MODELS,
 	createDefaultStepSubTasks,
+	createStepEphemeralNote,
 	GeminiModelId,
 	GuardrailActionPolicy,
 	KeyRoutingScope,
@@ -12,6 +13,7 @@ import {
 	WorkflowTopology,
 } from 'lib/workflowTypes';
 import {
+	ChatBubbleIcon,
 	CheckIcon,
 	CopyIcon,
 	PlusIcon,
@@ -63,6 +65,16 @@ export default function Pane({
 	const [expandedStepIds, setExpandedStepIds] = useState<
 		Record<string, boolean>
 	>({});
+	const [openNoteStepIds, setOpenNoteStepIds] = useState<
+		Record<string, boolean>
+	>({});
+	const [noteAuthor, setNoteAuthor] = useState<string>('Operator');
+	const [stepNoteDrafts, setStepNoteDrafts] = useState<Record<string, string>>(
+		{},
+	);
+	const [stepNoteIncludeInPrompt, setStepNoteIncludeInPrompt] = useState<
+		Record<string, boolean>
+	>({});
 	const [copiedKey, setCopiedKey] = useState<string | null>(null);
 	const [directChatInput, setDirectChatInput] = useState('');
 
@@ -70,6 +82,83 @@ export default function Pane({
 		setExpandedStepIds((prev) => ({
 			...prev,
 			[stepId]: prev[stepId] === undefined ? false : !prev[stepId],
+		}));
+	};
+
+	const toggleStepNotesOpen = (stepId: string) => {
+		setOpenNoteStepIds((prev) => ({
+			...prev,
+			[stepId]: !prev[stepId],
+		}));
+	};
+
+	const handleAddStepNote = (stepId: string) => {
+		const rawDraft = (stepNoteDrafts[stepId] || '').trim();
+		if (!rawDraft) return;
+
+		const includeInStepPrompt = stepNoteIncludeInPrompt[stepId] ?? true;
+		const newNote = createStepEphemeralNote({
+			author: noteAuthor,
+			text: rawDraft,
+			includeInStepPrompt,
+		});
+
+		onUpdateInstance(instance.id, (prev) => ({
+			...prev,
+			totalRedactionsCount:
+				prev.totalRedactionsCount + newNote.redactionsApplied,
+			steps: prev.steps.map((s) =>
+				s.id === stepId
+					? {
+							...s,
+							notes: [...(s.notes || []), newNote],
+					  }
+					: s,
+			),
+		}));
+
+		setStepNoteDrafts((prev) => ({ ...prev, [stepId]: '' }));
+		setOpenNoteStepIds((prev) => ({ ...prev, [stepId]: true }));
+	};
+
+	const handleDeleteStepNote = (stepId: string, noteId: string) => {
+		onUpdateInstance(instance.id, (prev) => ({
+			...prev,
+			steps: prev.steps.map((s) =>
+				s.id === stepId
+					? {
+							...s,
+							notes: (s.notes || []).filter((n) => n.id !== noteId),
+					  }
+					: s,
+			),
+		}));
+	};
+
+	const handleToggleNotePromptBinding = (stepId: string, noteId: string) => {
+		onUpdateInstance(instance.id, (prev) => ({
+			...prev,
+			steps: prev.steps.map((s) =>
+				s.id === stepId
+					? {
+							...s,
+							notes: (s.notes || []).map((n) =>
+								n.id === noteId
+									? { ...n, includeInStepPrompt: !n.includeInStepPrompt }
+									: n,
+							),
+					  }
+					: s,
+			),
+		}));
+	};
+
+	const handlePurgeStepNotes = (stepId: string) => {
+		onUpdateInstance(instance.id, (prev) => ({
+			...prev,
+			steps: prev.steps.map((s) =>
+				s.id === stepId ? { ...s, notes: [] } : s,
+			),
 		}));
 	};
 
@@ -111,6 +200,7 @@ export default function Pane({
 				elapsedMs: 0,
 				currentPhaseLabel: 'Ready for execution',
 				subTasks: createDefaultStepSubTasks(stepId),
+				notes: [],
 			};
 			return {
 				...prev,
@@ -790,6 +880,26 @@ export default function Pane({
 											</>
 										)}
 
+										{/* Ephemeral Step Notes Toggle Button */}
+										<button
+											type="button"
+											onClick={() => toggleStepNotesOpen(step.id)}
+											className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-sans font-medium transition-colors ${
+												(step.notes?.length || 0) > 0 ||
+												openNoteStepIds[step.id]
+													? 'bg-indigo-950/70 border-indigo-500/50 text-indigo-300 hover:bg-indigo-900/60'
+													: 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+											}`}
+											title="Add or view ephemeral collaborative notes for this execution step (stored in session memory only)"
+										>
+											<ChatBubbleIcon className="w-3 h-3 shrink-0" />
+											<span>
+												{(step.notes?.length || 0) > 0
+													? `Notes (${step.notes!.length})`
+													: '+ Note'}
+											</span>
+										</button>
+
 										{instance.steps.length > 1 &&
 											instance.status !== 'running' && (
 												<button
@@ -921,6 +1031,181 @@ export default function Pane({
 										</div>
 									)}
 								</div>
+
+								{/* EPHEMERAL COLLABORATIVE STEP NOTES & ANNOTATIONS DRAWER */}
+								{(openNoteStepIds[step.id] ||
+									(step.notes && step.notes.length > 0)) && (
+									<div className="ml-5 mt-1 p-2.5 bg-slate-950/90 border border-indigo-900/50 rounded-md space-y-2 text-xs">
+										<div className="flex items-center justify-between gap-2">
+											<div className="flex items-center gap-1.5 min-w-0">
+												<ChatBubbleIcon className="w-3 h-3 text-indigo-400 shrink-0" />
+												<span className="text-[11px] font-semibold text-indigo-200 truncate">
+													Ephemeral Step Notes ({step.notes?.length || 0})
+												</span>
+												<span className="text-[10px] text-slate-500 font-mono truncate">
+													· Session RAM only · PII Auto-Scrubbed
+												</span>
+											</div>
+											<div className="flex items-center gap-2 shrink-0">
+												{(step.notes?.length || 0) > 0 && (
+													<button
+														type="button"
+														onClick={() => handlePurgeStepNotes(step.id)}
+														className="text-[10px] text-slate-400 hover:text-red-400 font-mono transition-colors"
+														title="Purge all ephemeral notes on this step"
+													>
+														Purge Notes
+													</button>
+												)}
+												<button
+													type="button"
+													onClick={() => toggleStepNotesOpen(step.id)}
+													className="text-[10px] text-slate-400 hover:text-slate-200"
+												>
+													{openNoteStepIds[step.id] ? 'Hide Form' : '+ Add Note'}
+												</button>
+											</div>
+										</div>
+
+										{/* Existing Ephemeral Notes List */}
+										{step.notes && step.notes.length > 0 && (
+											<div className="space-y-1.5">
+												{step.notes.map((note) => (
+													<div
+														key={note.id}
+														className="p-2 bg-slate-900/90 border border-slate-800 rounded flex flex-col gap-1"
+													>
+														<div className="flex items-center justify-between gap-2 text-[10px]">
+															<div className="flex items-center gap-1.5 min-w-0">
+																<span className="font-semibold text-indigo-300 truncate">
+																	{note.author}
+																</span>
+																<span className="text-slate-600">·</span>
+																<span className="font-mono tabular-nums text-slate-400">
+																	{new Date(note.createdAt).toLocaleTimeString(
+																		[],
+																		{
+																			hour: '2-digit',
+																			minute: '2-digit',
+																			second: '2-digit',
+																		},
+																	)}
+																</span>
+																{note.redactionsApplied > 0 && (
+																	<span className="px-1.5 py-0.2 bg-emerald-950/80 border border-emerald-700/50 rounded text-[9px] font-mono text-emerald-300">
+																		{note.redactionsApplied} PII masked
+																	</span>
+																)}
+															</div>
+
+															<div className="flex items-center gap-2 shrink-0">
+																<button
+																	type="button"
+																	onClick={() =>
+																		handleToggleNotePromptBinding(
+																			step.id,
+																			note.id,
+																		)
+																	}
+																	className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors ${
+																		note.includeInStepPrompt
+																			? 'bg-indigo-950/60 border-indigo-500/40 text-indigo-300'
+																			: 'bg-slate-950 border-slate-800 text-slate-500'
+																	}`}
+																	title="Toggle whether this note is injected into the agent's step execution context & handoff"
+																>
+																	{note.includeInStepPrompt
+																		? 'In Step Context'
+																		: 'Doc Only'}
+																</button>
+																<button
+																	type="button"
+																	onClick={() =>
+																		handleDeleteStepNote(step.id, note.id)
+																	}
+																	className="text-slate-500 hover:text-red-400 transition-colors"
+																	title="Delete ephemeral note"
+																>
+																	<TrashIcon className="w-3 h-3" />
+																</button>
+															</div>
+														</div>
+
+														<p className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed">
+															{note.text}
+														</p>
+													</div>
+												))}
+											</div>
+										)}
+
+										{/* Add New Ephemeral Step Note Composer */}
+										{openNoteStepIds[step.id] && (
+											<div className="pt-1 space-y-1.5 border-t border-slate-800/80">
+												<div className="flex items-center gap-1.5">
+													<input
+														type="text"
+														aria-label={`Note author for ${step.title}`}
+														value={noteAuthor}
+														onChange={(e) => setNoteAuthor(e.target.value)}
+														placeholder="Author / Role"
+														className="w-28 px-2 py-1 text-[11px] bg-slate-900 border border-slate-800 rounded text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+													/>
+													<input
+														type="text"
+														aria-label={`Add ephemeral note for ${step.title}`}
+														value={stepNoteDrafts[step.id] || ''}
+														onChange={(e) =>
+															setStepNoteDrafts((prev) => ({
+																...prev,
+																[step.id]: e.target.value,
+															}))
+														}
+														onKeyDown={(e) => {
+															if (e.key === 'Enter' && !e.shiftKey) {
+																e.preventDefault();
+																handleAddStepNote(step.id);
+															}
+														}}
+														placeholder="Add collaborative step note or constraint (Enter to save)..."
+														className="flex-1 px-2.5 py-1 text-[11px] bg-slate-900 border border-slate-800 rounded text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+													/>
+													<button
+														type="button"
+														onClick={() => handleAddStepNote(step.id)}
+														disabled={!(stepNoteDrafts[step.id] || '').trim()}
+														className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[11px] font-medium rounded transition-colors shrink-0"
+													>
+														Add Note
+													</button>
+												</div>
+
+												<div className="flex items-center justify-between text-[10px] text-slate-400">
+													<label className="inline-flex items-center gap-1.5 cursor-pointer">
+														<input
+															type="checkbox"
+															checked={stepNoteIncludeInPrompt[step.id] ?? true}
+															onChange={(e) =>
+																setStepNoteIncludeInPrompt((prev) => ({
+																	...prev,
+																	[step.id]: e.target.checked,
+																}))
+															}
+															className="rounded border-slate-700 bg-slate-900 text-indigo-600"
+														/>
+														<span>
+															Include note in step execution prompt &amp;
+															exported workflow bundle
+														</span>
+													</label>
+													<span className="font-mono text-[9px] text-slate-500">
+														Cleared on reload
+													</span>
+												</div>
+											</div>
+										)}
+									</div>
+								)}
 
 								{/* Step Execution Results */}
 								{expanded &&

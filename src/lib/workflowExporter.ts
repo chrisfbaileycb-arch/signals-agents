@@ -309,6 +309,17 @@ export function buildWorkflowResultsLog(params: {
 			if (step.verificationCheck) {
 				lines.push(`      Verification      : ${step.verificationCheck}`);
 			}
+			if (step.notes && step.notes.length > 0) {
+				lines.push(
+					`      Ephemeral Notes   : (${step.notes.length} collaborative note(s))`,
+					...step.notes.map(
+						(n) =>
+							`        • [${n.author} @ ${n.createdAt}] (${
+								n.includeInStepPrompt ? 'In Step Context' : 'Doc Only'
+							}): ${n.text}`,
+					),
+				);
+			}
 			if (step.executionOutput) {
 				lines.push(
 					`      Execution Output  :`,
@@ -621,6 +632,18 @@ export function buildWorkflowFileBundle(params: {
 				'',
 				`## Step Instruction`,
 				step.instruction,
+				'',
+				`## Collaborative Ephemeral Step Notes (${step.notes?.length || 0})`,
+				step.notes && step.notes.length > 0
+					? step.notes
+							.map(
+								(n) =>
+									`- **${n.author}** (\`${n.createdAt}\` · ${
+										n.includeInStepPrompt ? 'In Step Context' : 'Doc Only'
+									}): ${n.text}`,
+							)
+							.join('\n')
+					: '_No ephemeral step notes attached during this session._',
 				'',
 				`## Reasoning Summary`,
 				step.reasoningSummary ||

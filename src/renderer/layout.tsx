@@ -286,6 +286,10 @@ export default function Layout() {
 				leaseId: null,
 				leaseStatus: 'purged',
 				leasePurgedAt: nowIso,
+				steps: inst.steps.map((s) => ({
+					...s,
+					notes: [],
+				})),
 			})),
 		);
 	};
@@ -463,12 +467,25 @@ export default function Layout() {
 						? 'block'
 						: 'mask';
 
+				const latestStep =
+					latestInst.steps.find((s) => s.id === step.id) || step;
+				const activeStepNotes = (latestStep.notes || []).filter(
+					(n) => n.includeInStepPrompt,
+				);
+				const formattedStepNotes =
+					activeStepNotes.length > 0
+						? `\nCollaborative Step Notes & Operator Annotations:\n${activeStepNotes
+								.map((n) => `- [${n.author}]: ${n.text}`)
+								.join('\n')}`
+						: '';
+
 				const stepPrompt = [
 					`Primary Workflow Objective:\n${promptText}`,
 					accumulatedStepsOutput
 						? `\nCompleted Earlier Steps in ${latestInst.name}:\n${accumulatedStepsOutput}`
 						: '',
 					`\nExecute Step ${i + 1} of ${stepsSnapshot.length} ("${step.title}"): ${step.instruction}`,
+					formattedStepNotes,
 				]
 					.filter(Boolean)
 					.join('\n');

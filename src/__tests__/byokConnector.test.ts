@@ -232,5 +232,24 @@ describe('Signals Agents — BYOK Ephemeral Connector & Safety Guardrails', () =
 			// Network call must never fire when blocked by guardrail
 			expect(mockFetch).not.toHaveBeenCalled();
 		});
+
+		it('creates ephemeral collaborative step notes in session memory with automatic PII & secret redaction', () => {
+			const { createStepEphemeralNote } = require('../lib/workflowTypes');
+			const note = createStepEphemeralNote({
+				author: 'Lead Architect (lead@company.io)',
+				text: 'Ensure step 02 validates account ACCT-998877 and never logs SSN 123-45-6789.',
+				includeInStepPrompt: true,
+			});
+
+			expect(note.id).toMatch(/^note-/);
+			expect(note.author).toContain('[REDACTED_EMAIL]');
+			expect(note.author).not.toContain('lead@company.io');
+			expect(note.text).toContain('[REDACTED_FINANCIAL_ACCOUNT]');
+			expect(note.text).toContain('[REDACTED_SSN]');
+			expect(note.text).not.toContain('123-45-6789');
+			expect(note.redactionsApplied).toBeGreaterThanOrEqual(3);
+			expect(note.includeInStepPrompt).toBe(true);
+			expect(window.localStorage.length).toBe(0);
+		});
 	});
 });
