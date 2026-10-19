@@ -1,0 +1,11 @@
+{
+  "name": "Signals Agents",
+  "description": "Multi-agent directional workflow studio with real-time step progress bars, front-end BYOK ephemeral credential connector, interactive Mind-Work-Done visual orchestration, and PII/financial safety guardrails.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

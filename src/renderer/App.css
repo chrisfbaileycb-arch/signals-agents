@@ -1,0 +1,379 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+body {
+	font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+		sans-serif;
+	padding: 0;
+	margin: 0;
+	overflow: hidden;
+	background-color: #020617;
+	color: #f8fafc;
+}
+
+.font-mono {
+	font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco,
+		Consolas, monospace;
+	font-variant-numeric: tabular-nums;
+}
+
+#root {
+	height: 100vh;
+}
+
+/* Mind-Work-Done / Atrium architectural grid backdrop */
+.atrium-grid-bg {
+	background-image:
+		linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+	background-size: 28px 28px;
+}
+
+svg {
+	isolation: isolate;
+}
+
+.glow-emerald {
+	filter: drop-shadow(0 0 10px rgba(52, 211, 153, 0.5));
+}
+
+.glow-violet {
+	filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.65));
+}
+
+.glow-amber {
+	filter: drop-shadow(0 0 10px rgba(251, 191, 36, 0.5));
+}
+
+.glow-rose {
+	filter: drop-shadow(0 0 12px rgba(244, 63, 94, 0.6));
+}
+
+@keyframes dashFlow {
+	to {
+		stroke-dashoffset: -24;
+	}
+}
+
+.edge-flow-active {
+	stroke-dasharray: 6 6;
+	animation: dashFlow 0.75s linear infinite;
+}
+
+@keyframes progressShimmer {
+	0% {
+		background-position: 200% 0;
+	}
+	100% {
+		background-position: -200% 0;
+	}
+}
+
+.step-progress-active-bar {
+	background: linear-gradient(
+		90deg,
+		#f59e0b 0%,
+		#fbbf24 35%,
+		#38bdf8 65%,
+		#f59e0b 100%
+	);
+	background-size: 200% 100%;
+	animation: progressShimmer 1.6s linear infinite;
+}
+
+/* Custom visible scrollbars for workspace and agent workflow panes */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-track {
+	background: rgba(15, 23, 42, 0.45);
+}
+
+::-webkit-scrollbar-thumb {
+	background: rgba(100, 116, 139, 0.7);
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: rgba(99, 102, 241, 0.85);
+}
+
+/* ============================================================================
+   ENVIRONMENT THEME 1: EARTHY TONES (Terracotta, Roasted Umber, Olive & Sand)
+   ============================================================================ */
+[data-theme='earthy'] {
+	background-color: #191512 !important;
+	color: #f5ebe0 !important;
+}
+
+[data-theme='earthy'] .bg-slate-950,
+[data-theme='earthy'] .bg-slate-950\/60,
+[data-theme='earthy'] .bg-slate-950\/80,
+[data-theme='earthy'] .bg-slate-950\/90 {
+	background-color: #15110e !important;
+}
+
+[data-theme='earthy'] .bg-slate-900,
+[data-theme='earthy'] .bg-slate-900\/90,
+[data-theme='earthy'] .bg-slate-900\/80 {
+	background-color: #251f1a !important;
+}
+
+[data-theme='earthy'] .bg-slate-800 {
+	background-color: #382f27 !important;
+}
+
+[data-theme='earthy'] .border-slate-800,
+[data-theme='earthy'] .border-slate-800\/90,
+[data-theme='earthy'] .border-slate-800\/80,
+[data-theme='earthy'] .border-slate-800\/60,
+[data-theme='earthy'] .border-slate-700 {
+	border-color: #463a30 !important;
+}
+
+[data-theme='earthy'] .text-slate-100,
+[data-theme='earthy'] .text-slate-200 {
+	color: #f5ebe0 !important;
+}
+
+[data-theme='earthy'] .text-slate-300 {
+	color: #decbb7 !important;
+}
+
+[data-theme='earthy'] .text-slate-400,
+[data-theme='earthy'] .text-slate-500 {
+	color: #b5a18e !important;
+}
+
+[data-theme='earthy'] .bg-indigo-600 {
+	background-color: #b85418 !important;
+}
+
+[data-theme='earthy'] .bg-indigo-600:hover {
+	background-color: #cf6322 !important;
+}
+
+[data-theme='earthy'] .text-indigo-400,
+[data-theme='earthy'] .text-indigo-300 {
+	color: #f59e0b !important;
+}
+
+[data-theme='earthy'] .border-indigo-500,
+[data-theme='earthy'] .border-indigo-500\/80 {
+	border-color: #d97706 !important;
+}
+
+[data-theme='earthy'] .atrium-grid-bg {
+	background-color: #161310 !important;
+	background-image:
+		linear-gradient(rgba(245, 235, 224, 0.035) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(245, 235, 224, 0.035) 1px, transparent 1px);
+}
+
+/* ============================================================================
+   ENVIRONMENT THEME 2: LIGHT (Crisp Daylight Alabaster & Deep Slate Ink)
+   ============================================================================ */
+[data-theme='light'] {
+	background-color: #f1f5f9 !important;
+	color: #0f172a !important;
+}
+
+[data-theme='light'] .bg-slate-950,
+[data-theme='light'] .bg-slate-950\/60,
+[data-theme='light'] .bg-slate-950\/80,
+[data-theme='light'] .bg-slate-950\/90 {
+	background-color: #f8fafc !important;
+}
+
+[data-theme='light'] .bg-slate-900,
+[data-theme='light'] .bg-slate-900\/90,
+[data-theme='light'] .bg-slate-900\/80 {
+	background-color: #ffffff !important;
+}
+
+[data-theme='light'] .bg-slate-800 {
+	background-color: #e2e8f0 !important;
+	color: #0f172a !important;
+}
+
+[data-theme='light'] .border-slate-800,
+[data-theme='light'] .border-slate-800\/90,
+[data-theme='light'] .border-slate-800\/80,
+[data-theme='light'] .border-slate-800\/60,
+[data-theme='light'] .border-slate-700 {
+	border-color: #cbd5e1 !important;
+}
+
+[data-theme='light'] .divide-slate-800 > :not([hidden]) ~ :not([hidden]),
+[data-theme='light'] .divide-slate-800\/60 > :not([hidden]) ~ :not([hidden]) {
+	border-color: #e2e8f0 !important;
+}
+
+[data-theme='light'] .text-white:not(.bg-indigo-600 *):not(.bg-indigo-600):not(.bg-emerald-600),
+[data-theme='light'] .text-slate-100,
+[data-theme='light'] .text-slate-200 {
+	color: #0f172a !important;
+}
+
+[data-theme='light'] .bg-indigo-600,
+[data-theme='light'] .bg-indigo-600 span {
+	color: #ffffff !important;
+}
+
+[data-theme='light'] .text-slate-300 {
+	color: #334155 !important;
+}
+
+[data-theme='light'] .text-slate-400,
+[data-theme='light'] .text-slate-500 {
+	color: #475569 !important;
+}
+
+[data-theme='light'] .text-indigo-400,
+[data-theme='light'] .text-indigo-300 {
+	color: #4338ca !important;
+}
+
+[data-theme='light'] .text-emerald-400,
+[data-theme='light'] .text-emerald-300 {
+	color: #047857 !important;
+}
+
+[data-theme='light'] .text-amber-300 {
+	color: #b45309 !important;
+}
+
+[data-theme='light'] .text-red-400,
+[data-theme='light'] .text-red-300 {
+	color: #b91c1c !important;
+}
+
+[data-theme='light'] .bg-indigo-950\/60,
+[data-theme='light'] .bg-indigo-950\/30 {
+	background-color: #e0e7ff !important;
+}
+
+[data-theme='light'] .bg-emerald-950\/30 {
+	background-color: #d1fae5 !important;
+}
+
+[data-theme='light'] .atrium-grid-bg {
+	background-color: #f8fafc !important;
+	background-image:
+		linear-gradient(rgba(15, 23, 42, 0.055) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(15, 23, 42, 0.055) 1px, transparent 1px);
+}
+
+[data-theme='light'] .mindmap-stage-root {
+	font-weight: 600;
+	-webkit-font-smoothing: subpixel-antialiased;
+}
+
+/* ============================================================================
+   ENVIRONMENT THEME 3: PASTEL ATELIER (Soft Lavender, Porcelain Lilac & Mint)
+   ============================================================================ */
+[data-theme='pastel'] {
+	background-color: #f3effb !important;
+	color: #2b1854 !important;
+}
+
+[data-theme='pastel'] .bg-slate-950,
+[data-theme='pastel'] .bg-slate-950\/60,
+[data-theme='pastel'] .bg-slate-950\/80,
+[data-theme='pastel'] .bg-slate-950\/90 {
+	background-color: #efe9fa !important;
+}
+
+[data-theme='pastel'] .bg-slate-900,
+[data-theme='pastel'] .bg-slate-900\/90,
+[data-theme='pastel'] .bg-slate-900\/80 {
+	background-color: #fcfaff !important;
+}
+
+[data-theme='pastel'] .bg-slate-800 {
+	background-color: #e2d6f7 !important;
+	color: #2b1854 !important;
+}
+
+[data-theme='pastel'] .border-slate-800,
+[data-theme='pastel'] .border-slate-800\/90,
+[data-theme='pastel'] .border-slate-800\/80,
+[data-theme='pastel'] .border-slate-800\/60,
+[data-theme='pastel'] .border-slate-700 {
+	border-color: #cbb8ed !important;
+}
+
+[data-theme='pastel'] .divide-slate-800 > :not([hidden]) ~ :not([hidden]),
+[data-theme='pastel'] .divide-slate-800\/60 > :not([hidden]) ~ :not([hidden]) {
+	border-color: #ded0f5 !important;
+}
+
+[data-theme='pastel'] .text-white:not(.bg-indigo-600 *):not(.bg-indigo-600),
+[data-theme='pastel'] .text-slate-100,
+[data-theme='pastel'] .text-slate-200 {
+	color: #2b1854 !important;
+}
+
+[data-theme='pastel'] .bg-indigo-600 {
+	background-color: #7c3aed !important;
+	color: #ffffff !important;
+}
+
+[data-theme='pastel'] .bg-indigo-600 span {
+	color: #ffffff !important;
+}
+
+[data-theme='pastel'] .text-slate-300 {
+	color: #4a337a !important;
+}
+
+[data-theme='pastel'] .text-slate-400,
+[data-theme='pastel'] .text-slate-500 {
+	color: #654c96 !important;
+}
+
+[data-theme='pastel'] .text-indigo-400,
+[data-theme='pastel'] .text-indigo-300 {
+	color: #6d28d9 !important;
+}
+
+[data-theme='pastel'] .text-emerald-400,
+[data-theme='pastel'] .text-emerald-300 {
+	color: #0d9488 !important;
+}
+
+[data-theme='pastel'] .text-amber-300 {
+	color: #c2410c !important;
+}
+
+[data-theme='pastel'] .bg-indigo-950\/60,
+[data-theme='pastel'] .bg-indigo-950\/30 {
+	background-color: #ede9fe !important;
+}
+
+[data-theme='pastel'] .bg-emerald-950\/30 {
+	background-color: #ccfbf1 !important;
+}
+
+[data-theme='pastel'] .atrium-grid-bg {
+	background-color: #faf7ff !important;
+	background-image:
+		linear-gradient(rgba(43, 24, 84, 0.06) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(43, 24, 84, 0.06) 1px, transparent 1px);
+}
+
+[data-theme='pastel'] .mindmap-stage-root {
+	font-weight: 600;
+	-webkit-font-smoothing: subpixel-antialiased;
+}
+
+
