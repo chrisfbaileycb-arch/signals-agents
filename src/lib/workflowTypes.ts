@@ -177,7 +177,7 @@ export interface LeaseAuditEntry {
 	totalDurationMs: number;
 	stepsCompleted: number;
 	redactionsApplied: number;
-	status: 'PURGED_ON_COMPLETION' | 'BLOCKED_BY_GUARDRAIL';
+	status: 'PURGED_ON_COMPLETION' | 'BLOCKED_BY_GUARDRAIL' | 'FAILED_PROVIDER_ERROR';
 }
 
 export const AVAILABLE_MODELS: {
@@ -323,7 +323,7 @@ export function createDefaultStepSubTasks(stepId: string): StepSubTask[] {
 		},
 		{
 			id: `${stepId}-sub-4`,
-			label: 'Deliverable Schema Verification',
+			label: 'Response & Output Redaction',
 			status: 'pending',
 		},
 	];

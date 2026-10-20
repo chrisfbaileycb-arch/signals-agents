@@ -248,7 +248,7 @@ export default function Layout() {
 		totalDurationMs: number,
 		stepsCompleted: number,
 		redactionsApplied: number,
-		status: 'PURGED_ON_COMPLETION' | 'BLOCKED_BY_GUARDRAIL' = 'PURGED_ON_COMPLETION',
+		status: LeaseAuditEntry['status'] = 'PURGED_ON_COMPLETION',
 	) => {
 		const purgedAt = new Date().toISOString();
 		setLastPurgeReceipt({
@@ -347,6 +347,7 @@ export default function Layout() {
 		stepsDone: number;
 		redactionsCount: number;
 		blocked: boolean;
+		failed: boolean;
 	}> => {
 		const target = instancesRef.current.find((i) => i.id === instanceId);
 		if (!target) {
@@ -356,6 +357,7 @@ export default function Layout() {
 				stepsDone: 0,
 				redactionsCount: 0,
 				blocked: false,
+				failed: true,
 			};
 		}
 
@@ -384,6 +386,7 @@ export default function Layout() {
 				stepsDone: 0,
 				redactionsCount: clientScan.piiCount + clientScan.financialCount,
 				blocked: true,
+				failed: false,
 			};
 		}
 
@@ -437,7 +440,7 @@ export default function Layout() {
 								progressPercent: 12,
 								elapsedMs: 0,
 								currentPhaseLabel:
-									'Phase 1/4 · Scanning PII & Financial Guardrails...',
+									'Estimated phase 1/4 · Preparing request...',
 								subTasks: createDefaultStepSubTasks(s.id).map((sub, idx) => ({
 									...sub,
 									status: idx === 0 ? 'active' : 'pending',
@@ -463,10 +466,10 @@ export default function Layout() {
 						? 2
 						: 3;
 				const phaseLabels = [
-					'Phase 1/4 · Scanning PII & Financial Guardrails...',
-					'Phase 2/4 · Binding Harness & System Prompt Context...',
-					'Phase 3/4 · Running Model Reasoning & Synthesis...',
-					'Phase 4/4 · Verifying Deliverable Schema & Safety...',
+					'Estimated phase 1/4 · Preparing request...',
+					'Estimated phase 2/4 · Request in flight...',
+					'Estimated phase 3/4 · Waiting for provider...',
+					'Estimated phase 4/4 · Waiting for response...',
 				];
 
 				updateInstance(instanceId, (prev) => ({
@@ -578,7 +581,7 @@ export default function Layout() {
 									progressPercent: 100,
 									elapsedMs: stepDuration,
 									currentPhaseLabel:
-										'All 4 sub-tasks verified · Deliverable ready',
+										'Provider response received · Ready for review',
 									subTasks: createDefaultStepSubTasks(s.id).map((sub) => ({
 										...sub,
 										status: 'done',
@@ -622,6 +625,7 @@ export default function Layout() {
 					stepsDone,
 					redactionsCount: instanceRedactions,
 					blocked: isGuardrailRefusal,
+					failed: !isGuardrailRefusal,
 				};
 			}
 		}
@@ -640,6 +644,7 @@ export default function Layout() {
 			stepsDone,
 			redactionsCount: instanceRedactions,
 			blocked: false,
+			failed: false,
 		};
 	};
 
@@ -686,7 +691,7 @@ export default function Layout() {
 				result.durationMs,
 				result.stepsDone,
 				result.redactionsCount,
-				result.blocked ? 'BLOCKED_BY_GUARDRAIL' : 'PURGED_ON_COMPLETION',
+				result.blocked ? 'BLOCKED_BY_GUARDRAIL' : result.failed ? 'FAILED_PROVIDER_ERROR' : 'PURGED_ON_COMPLETION',
 			);
 
 			updateInstance(instanceId, (prev) => ({
@@ -719,6 +724,7 @@ export default function Layout() {
 		let totalStepsCompleted = 0;
 		let totalRedactions = 0;
 		let anyBlocked = false;
+		let anyFailed = false;
 
 		try {
 			let upstreamDeliverable = '';
@@ -735,8 +741,9 @@ export default function Layout() {
 				);
 				totalStepsCompleted += res.stepsDone;
 				totalRedactions += res.redactionsCount;
-				if (res.blocked) {
-					anyBlocked = true;
+				if (res.blocked || res.failed) {
+					anyBlocked = res.blocked;
+					anyFailed = res.failed;
 					break;
 				}
 				if (res.deliverable) {
@@ -757,7 +764,7 @@ export default function Layout() {
 				totalWorkflowDurationMs,
 				totalStepsCompleted,
 				totalRedactions,
-				anyBlocked ? 'BLOCKED_BY_GUARDRAIL' : 'PURGED_ON_COMPLETION',
+				anyBlocked ? 'BLOCKED_BY_GUARDRAIL' : anyFailed ? 'FAILED_PROVIDER_ERROR' : 'PURGED_ON_COMPLETION',
 			);
 
 			setInstances((prev) =>
@@ -1819,7 +1826,7 @@ export default function Layout() {
 													</span>
 												) : (
 													<span className="text-emerald-400">
-														Terminal Synthesis Node → Triggers Key Purge
+														Terminal Synthesis Node → Releases Run Lease
 													</span>
 												)}
 											</div>
@@ -2016,7 +2023,7 @@ export default function Layout() {
 												{inst.leaseStatus === 'active'
 													? `ACTIVE`
 													: inst.leaseStatus === 'purged'
-													? 'PURGED (0ms)'
+													? 'LEASE RELEASED'
 													: keyRoutingScope === 'shared_four'
 													? 'SHARED 4x'
 													: `SCOPED 0${inst.id}`}
@@ -2256,7 +2263,7 @@ export default function Layout() {
 								</h2>
 								<p className="text-xs text-slate-400 mt-1">
 									Verifiable log confirming every workflow lease is
-									automatically deleted on completion (0ms post-run retention)
+									released when a run ends. Provider keys remain in page memory until reload or manual purge
 									and tracking all PII &amp; financial redactions.
 								</p>
 							</div>
@@ -2274,7 +2281,7 @@ export default function Layout() {
 						{auditLog.length === 0 ? (
 							<div className="p-8 bg-slate-900 border border-slate-800 rounded-lg text-center space-y-3">
 								<p className="text-sm font-medium text-slate-300">
-									No Completed Lease Purge Receipts Recorded Yet
+									No Completed Run Receipts Recorded Yet
 								</p>
 								<p className="text-xs text-slate-500 max-w-md mx-auto">
 									You can already browse and download the pre-configured
@@ -2282,7 +2289,7 @@ export default function Layout() {
 									<code className="font-mono text-indigo-300">/harness</code>)
 									and results log above, or run the 4-instance workflow to
 									record live step runtimes and automatic post-run credential
-									deletion receipts.
+									run receipts.
 								</p>
 								<button
 									type="button"
@@ -2315,7 +2322,7 @@ export default function Layout() {
 												Total Runtime
 											</th>
 											<th className="py-3 px-4 font-medium text-right">
-												Purged Timestamp
+												Lease Released At
 											</th>
 											<th className="py-3 px-4 font-medium text-right">
 												Credential &amp; Safety State
@@ -2351,13 +2358,13 @@ export default function Layout() {
 													})}
 												</td>
 												<td className="py-3 px-4 text-right font-sans font-medium">
-													{entry.status === 'BLOCKED_BY_GUARDRAIL' ? (
+													{entry.status !== 'PURGED_ON_COMPLETION' ? (
 														<span className="text-red-400">
-															Blocked by Guardrail · Key Deleted
+															{entry.status === 'FAILED_PROVIDER_ERROR' ? 'Provider failed · Lease released' : 'Guardrail blocked · Lease released'}
 														</span>
 													) : (
 														<span className="text-emerald-400">
-															Deleted on Completion (0ms)
+															Run finished · Lease released
 														</span>
 													)}
 												</td>

@@ -1,3 +1,4 @@
+import { makeOwnerGate } from './owner-gate.js';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -16,14 +17,18 @@ const hostFromArgs = hostArgIndex !== -1 ? args[hostArgIndex + 1] : null;
 const PORT = portFromArgs || Number(process.env.PORT) || 3000;
 const HOST = hostFromArgs || process.env.HOST || '0.0.0.0';
 
-app.use(express.json({ limit: '1mb' }));
+const isProduction = process.env.NODE_ENV === 'production';
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+if (isProduction || process.env.OWNER_PASSWORD) app.use(makeOwnerGate(process.env.OWNER_PASSWORD || ''));
+app.use((_req, res, next) => { res.set('Referrer-Policy', 'no-referrer'); res.set('X-Content-Type-Options', 'nosniff'); next(); });
 
 /**
  * Health & Financial Guardrail Verification Endpoint
  * Confirms that Signals Agents operates with zero server-side operator API keys:
  * all provider credentials live strictly in client-side page session memory via byokConnector.ts.
  */
-app.get('/api/health', (_req, res) => {
+app.get(['/health', '/api/health'], (_req, res) => {
 	res.json({
 		product: 'Signals Agents',
 		status: 'ok',
@@ -31,8 +36,6 @@ app.get('/api/health', (_req, res) => {
 		credentialStorage: 'client-ephemeral-session-memory-only',
 	});
 });
-
-const isProduction = process.env.NODE_ENV === 'production';
 
 process.on('uncaughtException', (err) => {
 	console.error('[Server Uncaught Exception]:', err);

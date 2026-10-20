@@ -1135,8 +1135,8 @@ export function createZipBlob(
 	files: WorkflowVirtualFile[],
 ): Blob {
 	const encoder = new TextEncoder();
-	const localFileChunks: Uint8Array[] = [];
-	const centralDirChunks: Uint8Array[] = [];
+	const localFileChunks: Uint8Array<ArrayBuffer>[] = [];
+	const centralDirChunks: Uint8Array<ArrayBuffer>[] = [];
 	let offset = 0;
 
 	const now = new Date();

@@ -199,8 +199,8 @@ export function setByokApiKey(
 	defaultModel?: string,
 ): EphemeralCredentialStatus {
 	const cleaned = apiKey.trim();
-	if (!cleaned) {
-		throw new Error('API key cannot be empty. Provide a valid personal provider API key.');
+	if (cleaned.length < 8 || cleaned.length > 500 || /[\r\n]/.test(cleaned)) {
+		throw new Error('Enter a personal API key between 8 and 500 characters without line breaks.');
 	}
 
 	const entry: InternalCredentialEntry = {
@@ -298,10 +298,7 @@ export function hasActiveByokCredential(providerId?: ByokProviderId): boolean {
 	if (providerId) {
 		return ephemeralCredentialStore.has(providerId);
 	}
-	return (
-		ephemeralCredentialStore.has(activeProviderIdState) ||
-		ephemeralCredentialStore.size > 0
-	);
+	return ephemeralCredentialStore.has(activeProviderIdState);
 }
 
 /**
@@ -506,18 +503,10 @@ export function redactPiiFromText(
 function resolveTargetCredential(
 	requestedProviderId?: ByokProviderId,
 ): InternalCredentialEntry {
-	if (requestedProviderId && ephemeralCredentialStore.has(requestedProviderId)) {
-		return ephemeralCredentialStore.get(requestedProviderId)!;
-	}
-	if (ephemeralCredentialStore.has(activeProviderIdState)) {
-		return ephemeralCredentialStore.get(activeProviderIdState)!;
-	}
-	const firstConfigured = ephemeralCredentialStore.values().next().value;
-	if (firstConfigured) {
-		return firstConfigured;
-	}
-
 	const targetProvider = requestedProviderId || activeProviderIdState;
+	const entry = ephemeralCredentialStore.get(targetProvider);
+	if (entry) return entry;
+
 	gatewayAuditTrail.unshift({
 		id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
 		timestamp: new Date().toISOString(),
@@ -532,7 +521,7 @@ function resolveTargetCredential(
 			'Refused by Financial Guardrail: No personal API key or local model endpoint configured in session memory.',
 	});
 	notifyListeners();
-	throw new FinancialGuardrailError();
+	throw new FinancialGuardrailError(`Connect a personal ${targetProvider} key or endpoint before running. Other providers were not substituted.`);
 }
 
 /**
@@ -612,13 +601,13 @@ export async function executeAuditedProviderCall(
 		.filter(Boolean)
 		.join('');
 
-	const effectiveModel =
-		request.model &&
-		(providerId === 'gemini' || !request.model.startsWith('gemini-'))
-			? request.model
-			: credential.defaultModel;
+	const effectiveModel = request.model &&
+		(providerId === 'gemini' ? request.model.startsWith('gemini-') : !request.model.startsWith('gemini-'))
+		? request.model : credential.defaultModel;
 
 	let rawOutputText = '';
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 90000);
 
 	try {
 		if (providerId === 'gemini') {
@@ -627,7 +616,7 @@ export async function executeAuditedProviderCall(
 				: credential.defaultModel;
 			const url = `${DEFAULT_PROVIDER_ENDPOINTS.gemini}/models/${encodeURIComponent(
 				geminiModel,
-			)}:generateContent?key=${encodeURIComponent(credential.apiKey!)}`;
+			)}:generateContent`;
 
 			const body: Record<string, unknown> = {
 				contents: [
@@ -653,7 +642,9 @@ export async function executeAuditedProviderCall(
 
 			const res = await fetchFn(url, {
 				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+				redirect: 'error',
+				signal: controller.signal,
+				headers: { 'Content-Type': 'application/json', 'x-goog-api-key': credential.apiKey! },
 				body: JSON.stringify(body),
 			});
 
@@ -672,6 +663,8 @@ export async function executeAuditedProviderCall(
 		} else if (providerId === 'anthropic') {
 			const res = await fetchFn(DEFAULT_PROVIDER_ENDPOINTS.anthropic, {
 				method: 'POST',
+				redirect: 'error',
+				signal: controller.signal,
 				headers: {
 					'Content-Type': 'application/json',
 					'x-api-key': credential.apiKey!,
@@ -715,6 +708,8 @@ export async function executeAuditedProviderCall(
 
 			const res = await fetchFn(chatUrl, {
 				method: 'POST',
+				redirect: 'error',
+				signal: controller.signal,
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					model: effectiveModel,
@@ -746,6 +741,8 @@ export async function executeAuditedProviderCall(
 
 			const res = await fetchFn(endpoint, {
 				method: 'POST',
+				redirect: 'error',
+				signal: controller.signal,
 				headers: {
 					'Content-Type': 'application/json',
 					Authorization: `Bearer ${credential.apiKey!}`,
@@ -770,8 +767,10 @@ export async function executeAuditedProviderCall(
 			const data: any = await res.json();
 			rawOutputText = data?.choices?.[0]?.message?.content || '';
 		}
+		if (!rawOutputText.trim()) throw new Error('Provider returned no text. This workflow step did not complete.');
 	} catch (err: any) {
 		const durationMs = Date.now() - startTime;
+		const safeMessage = redactPiiFromText(err?.message || 'Provider request failed. Browser access, the key, quota, and model availability may need checking.', { activeProviderKeyToExcludeFromLeak: credential.apiKey }).sanitizedText;
 		gatewayAuditTrail.unshift({
 			id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
 			timestamp: new Date().toISOString(),
@@ -782,10 +781,12 @@ export async function executeAuditedProviderCall(
 			detectedCategories: allCategories,
 			durationMs,
 			status: 'PROVIDER_ERROR',
-			message: err?.message || 'Provider API request failed',
+			message: safeMessage,
 		});
 		notifyListeners();
-		throw err;
+		throw new Error(safeMessage);
+	} finally {
+		clearTimeout(timeout);
 	}
 
 	// Scrub output through PII redactor as well

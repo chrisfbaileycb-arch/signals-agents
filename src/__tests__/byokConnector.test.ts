@@ -290,3 +290,47 @@ describe('Signals Agents — BYOK Ephemeral Connector & Safety Guardrails', () =
 	});
 });
 
+
+describe('Railway deployment credential boundaries', () => {
+  beforeEach(() => resetByokSessionMemory());
+
+  it('refuses an explicitly selected disconnected provider instead of charging another key', async () => {
+    setByokApiKey('openai', 'sk-proj-another-provider-key-123456789');
+    const fetchImpl = jest.fn();
+    await expect(executeAuditedProviderCall({ providerId: 'gemini', prompt: 'Test', fetchImpl }))
+      .rejects.toThrow(FinancialGuardrailError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(getByokAuditTrail()[0].providerId).toBe('gemini');
+  });
+
+  it('sends Gemini keys in a header, never a URL or application-server request', async () => {
+    const key = 'AIzaSyTestHeaderOnlyKey123456789012345678';
+    setByokApiKey('gemini', key);
+    const fetchImpl = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: 'Provider result' }] } }] }) });
+    const result = await executeAuditedProviderCall({ providerId: 'gemini', model: 'gpt-4o', prompt: 'Test', fetchImpl });
+    const [url, options] = fetchImpl.mock.calls[0];
+    expect(url).toMatch(/^https:\/\/generativelanguage.googleapis.com\//);
+    expect(url).not.toContain(key); expect(url).not.toContain('?key=');
+    expect(options.headers['x-goog-api-key']).toBe(key);
+    expect(options.redirect).toBe('error');
+    expect(result.modelUsed).toBe('gemini-2.5-flash');
+  });
+
+  it('does not report an empty provider response as a completed step', async () => {
+    setByokApiKey('openai', 'sk-proj-test-key-12345678901234567');
+    const fetchImpl = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [] }) });
+    await expect(executeAuditedProviderCall({ prompt: 'Test', fetchImpl })).rejects.toThrow('no text');
+    expect(getByokAuditTrail()[0].status).toBe('PROVIDER_ERROR');
+  });
+
+  it('redacts a provider-echoed credential from errors and audit receipts', async () => {
+    const key = 'sk-proj-test-sensitive-key-12345678901234567';
+    setByokApiKey('openai', key);
+    const fetchImpl = jest.fn().mockResolvedValue({ ok: false, status: 401, text: async () => `Invalid credential ${key}` });
+    let message = '';
+    try { await executeAuditedProviderCall({ prompt: 'Test', fetchImpl }); }
+    catch (error) { message = (error as Error).message; }
+    expect(message).not.toContain(key); expect(message).toContain('[REDACTED_API_KEY]');
+    expect(JSON.stringify(getByokAuditTrail())).not.toContain(key);
+  });
+});
